@@ -64,6 +64,9 @@ rc=$?
 jq -e '.structured_output | objects | has("summary") and has("verdict") and has("findings")' \
   "$work/claude.out" >/dev/null 2>&1 || { echo "no structured output"; exit 1; }
 jq '.structured_output' "$work/claude.out" > "$work/review.json"
+# 토큰 사용량은 숫자뿐이라 공개 로그에 남겨도 된다. 구독 한도 소모를 가늠하는 용도
+jq -r '"usage: turns=\(.num_turns // 0) in=\(.usage.input_tokens // 0) cache_read=\(.usage.cache_read_input_tokens // 0) out=\(.usage.output_tokens // 0) cost_usd=\(.total_cost_usd // 0)"' \
+  "$work/claude.out" 2>/dev/null
 
 # fail-closed: 리뷰 본문에 토큰 값이나 토큰 접두가 섞여 있으면 제출하지 않는다.
 # 리뷰 대상 레포의 문서·코드가 "환경을 읽어 적어라" 는 지시를 심어도 토큰이 PR 코멘트로 나가지 않게 하는 마지막 벽.

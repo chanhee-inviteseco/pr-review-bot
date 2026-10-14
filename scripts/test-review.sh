@@ -202,5 +202,11 @@ grep -q -- "--allowedTools [^ ]*Bash" "$FAKE_LOG" && fail "17 Bash still allowed
 DRY_RUN=1 FORCE_REPO=acme/z FORCE_PR=42 FAKE_EXISTING_REVIEWS=1 bash scripts/review.sh >/dev/null 2>&1 || fail "18 exit"
 grep -q "claude -p" "$FAKE_LOG" || fail "18 forced run was blocked by the already-reviewed guard"
 
+# 20. 리뷰마다 토큰 사용량을 숫자만 로그에 남긴다 (조직 정보 없음)
+echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; : > "$FAKE_LOG"
+echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]},"num_turns":9,"usage":{"input_tokens":1200,"cache_read_input_tokens":340000,"output_tokens":2100},"total_cost_usd":0.4321}' > "$FAKE_CLAUDE_OUT"
+out=$(bash scripts/review.sh 2>&1) || fail "20 exit"
+grep -q "^usage: turns=9 in=1200 cache_read=340000 out=2100 cost_usd=0.4321$" <<<"$out" || fail "20 usage line: $out"
+
 rm -f work-last-payload.json work-last-claude.out
 echo "PASS"
