@@ -35,7 +35,9 @@ GitHub 은 레포에 60일간 커밋이 없으면 schedule 워크플로를 자�
 - 모델: `scripts/review-one.sh` 의 `--model`. 한도가 빠듯하면 `claude-haiku-5-5`.
 - 간격: `.github/workflows/review.yml` 의 cron. 최소 5분.
 - 트리거 계정: 시크릿 `ME` 만 바꾸면 다른 사람 계정용이 된다(그 사람의 PAT·토큰 필요).
-- 수동 실행: Actions → Review → Run workflow. `repo`/`pr` 입력을 주면 검색 대신 그 PR 하나를 리뷰한다(내가 연 PR 에 쓰는 용도).
+- 수동 실행: Actions → Review → Run workflow. `repo`/`pr` 입력을 주면 검색 대신 그 PR 하나를 리뷰한다(내가 연 PR 에 쓰는 용도). `dry_run=true` 면 리뷰를 만들기만 하고 제출하지 않는다. 입력값은 env 가 아니라 이벤트 파일에서 읽으므로 로그에 찍히지 않는다.
+- 내가 연 PR 은 GitHub 이 본인 승인을 거부하므로 Approve 대신 Comment 로 올린다.
+- 봇은 리뷰 제출만 한다. 머지·커밋·푸시는 하지 않으며, Claude 에 허용된 도구도 파일 읽기와 `git diff`·`git log` 뿐이다.
 - 회사 API 키로 전환: `CLAUDE_CODE_OAUTH_TOKEN` 대신 `ANTHROPIC_API_KEY` 시크릿을 넣고 워크플로 env 이름을 바꾼다.
 
 ## 로컬 테스트
