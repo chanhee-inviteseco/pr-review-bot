@@ -11,9 +11,12 @@ jq -n --slurpfile in "$review" --arg sha "$head_sha" --arg big "$big" --arg mode
   | ($f | map(select(.severity=="rule")) | length) as $nr
   | ($f | map(select(.severity=="note")) | length) as $nn
   | {bug:"[버그]", rule:"[규칙 위반]", note:"[참고]"} as $tag
-  | (($f|length)==0 and $r.verdict=="ok") as $approve
-  | (if $approve then "문제 없음. 승인합니다."
-     elif ($f|length)==0 then "확인 권장 (요약 참고)"
+  # 승인 규칙: 확실한 오류(bug)가 없으면 승인한다. 지적이 하나도 없는데 verdict=check 는 "리뷰 못 함" 이므로 승인하지 않는다.
+  | (($f|length)==0 and $r.verdict!="ok") as $unreviewed
+  | ($nb==0 and ($unreviewed|not)) as $approve
+  | (if $unreviewed then "확인 권장 (요약 참고)"
+     elif ($f|length)==0 then "문제 없음. 승인합니다."
+     elif $approve then "승인합니다. 참고 \($f|length)건 (규칙 위반 \($nr) · 참고 \($nn))"
      else "확인 권장 \($f|length)건 (버그 \($nb) · 규칙 위반 \($nr) · 참고 \($nn))" end) as $head
   | (if $mode=="--no-inline" and ($f|length)>0
      then "\n\n" + ($f | map("- `\(.path):\(.line)` \($tag[.severity]) \(.body)") | join("\n"))

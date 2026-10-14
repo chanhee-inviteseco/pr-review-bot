@@ -23,6 +23,7 @@ if [ -n "${FORCE_REPO:-}" ] || [ -n "${FORCE_PR:-}" ]; then
     echo "bad inputs"; exit 1
   fi
   jq -n --arg r "$FORCE_REPO" --argjson n "$FORCE_PR" '[{number:$n, repository:{nameWithOwner:$r}}]' > "$WORK/prs.json"
+  export SKIP_GUARD=1   # 수동 지정은 같은 head 에 내 리뷰가 있어도 다시 리뷰한다
 else
   gh search prs --review-requested="$ME" --owner="$ORG" --state=open --draft=false \
     --limit 20 --json number,repository > "$WORK/prs.json" 2>/dev/null \

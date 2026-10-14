@@ -44,9 +44,24 @@ jq -e '.body | contains("- `docs/x.md:3` [규칙 위반] 열린 것 표에 기�
 out=$(bash scripts/build-payload.sh "$tmp/ok.json" abc123 true)
 jq -e '.body | endswith("변경이 커서 핵심 경로 위주로 봤습니다.")' <<<"$out" >/dev/null || fail "4 big"
 
-# 5. findings 없는데 verdict=check → COMMENT (승인하지 않는다)
+# 5. findings 없는데 verdict=check(리뷰 못 함) → COMMENT (승인하지 않는다)
 out=$(bash scripts/build-payload.sh "$tmp/check-empty.json" abc123 false)
 [ "$(jq -r .event <<<"$out")" = "COMMENT" ] || fail "5 event"
 jq -e '.body | startswith("확인 권장")' <<<"$out" >/dev/null || fail "5 head"
+
+# 6. bug 가 없는 지적(rule·note)만 있으면 → 인라인은 달되 APPROVE ("확실한 오류 아니면 승인")
+cat > "$tmp/soft.json" <<'EOF'
+{"summary":"설정 정리.","verdict":"check","findings":[
+ {"path":"src/A.kt","line":12,"severity":"rule","body":"네이밍 규칙과 다름."},
+ {"path":"src/B.kt","line":3,"severity":"note","body":"확인해보세요."}]}
+EOF
+out=$(bash scripts/build-payload.sh "$tmp/soft.json" abc123 false)
+[ "$(jq -r .event <<<"$out")" = "APPROVE" ] || fail "6 event"
+jq -e '.body | startswith("승인합니다. 참고 2건 (규칙 위반 1 · 참고 1)")' <<<"$out" >/dev/null || fail "6 head"
+[ "$(jq '.comments | length' <<<"$out")" = "2" ] || fail "6 comments"
+
+# 7. bug 가 하나라도 있으면 → COMMENT
+out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false)
+[ "$(jq -r .event <<<"$out")" = "COMMENT" ] || fail "7 event"
 
 echo "PASS"

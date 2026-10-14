@@ -39,6 +39,7 @@ cat > "$tmp/bin/claude" <<'EOF'
 #!/usr/bin/env bash
 echo "claude $*" >> "$FAKE_LOG"
 echo "claude-env GH_TOKEN=${GH_TOKEN:-unset} GH_PAT=${GH_PAT:-unset}" >> "$FAKE_LOG"
+[ -f .pr-review/diff.patch ] && [ -f .pr-review/files.txt ] && echo "claude-diff present" >> "$FAKE_LOG"
 cat >/dev/null   # 실제 claude -p 는 stdin 이 TTY 가 아니면 끝까지 읽는다. 루프의 남은 대상을 삼키는 버그 재현용
 [ "${FAKE_CLAUDE_FAIL:-}" = "1" ] && exit 1
 if [ "${FAKE_CLAUDE_TEXT_FIRST:-}" = "1" ] && [ "$(grep -c '^claude -p' "$FAKE_LOG")" -eq 1 ]; then
@@ -134,7 +135,7 @@ GH_PAT=dummy-pat bash scripts/review.sh >/dev/null 2>&1 || fail "12 exit"
 grep -q "^claude-env GH_TOKEN=unset GH_PAT=unset$" "$FAKE_LOG" || fail "12 github token reached claude"
 grep -q -- "--setting-sources user" "$FAKE_LOG" || fail "12 project settings not excluded"
 grep -q -- "--strict-mcp-config" "$FAKE_LOG" || fail "12 project mcp not excluded"
-grep -q -- "--disallowedTools Read(//proc/\*\*),Bash(git diff --no-index\*)" "$FAKE_LOG" || fail "12 /proc and --no-index not denied"
+grep -q -- "--disallowedTools Read(//proc/\*\*),Bash" "$FAKE_LOG" || fail "12 /proc and Bash not denied"
 
 # 13. 리뷰 JSON 에 토큰(값 또는 접두)이 섞이면 제출하지 않는다 — 프롬프트 인젝션으로 토큰이 본문에 실리는 경로 차단
 echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"
@@ -175,5 +176,19 @@ out=$(FAKE_NO_ORIGIN=1 bash scripts/review.sh 2>&1) && fail "16 exit should be 1
 grep -q "claude -p" "$FAKE_LOG" && fail "16 claude ran without a diff"
 grep -q "diff failed" <<<"$out" || fail "16 message: $out"
 
-rm -f work-last-payload.json
+# 17. diff 와 변경 파일 목록을 파일로 넘기고, Claude 에 Bash 를 주지 않는다
+#     (Claude 가 여러 명령을 한 줄로 묶어 실행하면 통째로 거부돼 리뷰를 포기하던 문제)
+echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; : > "$FAKE_LOG"
+echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
+bash scripts/review.sh >/dev/null 2>&1 || fail "17 exit"
+grep -q "^claude-diff present$" "$FAKE_LOG" || fail "17 diff files not written before claude"
+grep -q -- "--allowedTools Read,Grep,Glob " "$FAKE_LOG" || fail "17 allowedTools should be Read,Grep,Glob only"
+grep -q -- "--allowedTools [^ ]*Bash" "$FAKE_LOG" && fail "17 Bash still allowed"
+
+# 18. 수동 지정(FORCE)은 "지금 다시 리뷰" 이므로 같은 head 가드를 건너뛴다
+: > "$FAKE_LOG"
+DRY_RUN=1 FORCE_REPO=acme/z FORCE_PR=42 FAKE_EXISTING_REVIEWS=1 bash scripts/review.sh >/dev/null 2>&1 || fail "18 exit"
+grep -q "claude -p" "$FAKE_LOG" || fail "18 forced run was blocked by the already-reviewed guard"
+
+rm -f work-last-payload.json work-last-claude.out
 echo "PASS"
