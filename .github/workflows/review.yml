@@ -2,7 +2,8 @@ name: Review
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    # 정각(:00)은 GitHub 부하 피크라 schedule 이 밀리거나 버려진다. 1,6,11,… 분에 돈다
+    - cron: '1-59/5 * * * *'
   workflow_dispatch:
     inputs:
       repo:
