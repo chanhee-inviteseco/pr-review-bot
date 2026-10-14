@@ -10,9 +10,10 @@ rm -rf "$dir"
 gh repo clone "$repo" "$dir" -- -q >/dev/null 2>&1 || { echo "clone failed"; exit 1; }
 cd "$dir" || exit 1
 gh pr checkout "$number" >/dev/null 2>&1 || { echo "checkout failed"; exit 1; }
-gh pr view "$number" --json baseRefName,headRefOid > "$work/pr.json" 2>/dev/null || { echo "view failed"; exit 1; }
+gh pr view "$number" --json baseRefName,headRefOid,author > "$work/pr.json" 2>/dev/null || { echo "view failed"; exit 1; }
 base=$(jq -r .baseRefName "$work/pr.json")
 head_sha=$(jq -r .headRefOid "$work/pr.json")
+author=$(jq -r '.author.login // ""' "$work/pr.json")
 git fetch -q origin "$base" >/dev/null 2>&1
 
 changed=$(git diff --numstat "origin/$base...HEAD" 2>/dev/null | awk '{a+=$1+$2} END{print a+0}')
@@ -44,6 +45,12 @@ jq '.structured_output' "$work/claude.out" > "$work/review.json"
 
 bash "$ROOT/scripts/build-payload.sh" "$work/review.json" "$head_sha" "$big" > "$work/payload.json" 2>/dev/null \
   || { echo "payload failed"; exit 1; }
+
+# GitHub 은 본인 PR 승인을 거부한다(422). 내가 연 PR 이면 Approve 를 Comment 로 내린다.
+if [ "$author" = "${ME:-}" ]; then
+  jq '.event = "COMMENT" | .body |= sub("^문제 없음\\. 승인합니다\\."; "문제 없음. 본인 PR 이라 승인 대신 코멘트로 남긴다.")' \
+    "$work/payload.json" > "$work/payload.self.json" && mv "$work/payload.self.json" "$work/payload.json"
+fi
 
 if [ -n "${DRY_RUN:-}" ]; then
   cp "$work/payload.json" "$ROOT/work-last-payload.json" 2>/dev/null

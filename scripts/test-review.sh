@@ -16,8 +16,9 @@ case "$1 $2" in
   "auth setup-git") ;;
   "repo clone") mkdir -p "$4" && (cd "$4" && git init -q && git commit -q --allow-empty -m init && git branch -q -M develop && git checkout -q -b pr) ;;
   "pr checkout") ;;
-  "pr view") echo '{"baseRefName":"develop","headRefOid":"deadbeef"}' ;;
+  "pr view") echo "{\"baseRefName\":\"develop\",\"headRefOid\":\"deadbeef\",\"author\":{\"login\":\"${FAKE_AUTHOR:-other}\"}}" ;;
   "api "*)
+    cp "$6" "$FAKE_PAYLOAD" 2>/dev/null
     if [ "${FAKE_API_422_FIRST:-}" = "1" ] && [ "$(grep -c '^gh api' "$FAKE_LOG")" -eq 1 ]; then
       echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1
     fi
@@ -42,7 +43,7 @@ chmod +x "$tmp/bin/claude"
 }
 write_fake_gh; write_fake_claude
 export PATH="$tmp/bin:$PATH"
-export FAKE_LOG="$tmp/calls.log" FAKE_SEARCH="$tmp/search.json" FAKE_CLAUDE_OUT="$tmp/claude.json"
+export FAKE_LOG="$tmp/calls.log" FAKE_SEARCH="$tmp/search.json" FAKE_CLAUDE_OUT="$tmp/claude.json" FAKE_PAYLOAD="$tmp/payload.json"
 export ORG=acme ME=someone
 unset GH_PAT FAKE_API_422_FIRST FAKE_CLAUDE_FAIL FAKE_CLAUDE_TEXT_FIRST DRY_RUN FORCE_REPO FORCE_PR
 
@@ -92,6 +93,18 @@ grep -q "api -X POST" "$FAKE_LOG" && fail "6 api called in dry run"
 DRY_RUN=1 FORCE_REPO=acme/z FORCE_PR=42 bash scripts/review.sh >/dev/null 2>&1 || fail "7 exit"
 grep -q "search prs" "$FAKE_LOG" && fail "7 searched"
 grep -q "repo clone acme/z" "$FAKE_LOG" || fail "7 forced clone"
+
+# 8. 내가 연 PR(author == ME) 에 verdict ok → GitHub 은 본인 승인을 거부하므로 COMMENT 로 제출
+echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
+echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
+FAKE_AUTHOR=someone bash scripts/review.sh >/dev/null 2>&1 || fail "8 exit"
+[ "$(jq -r .event "$FAKE_PAYLOAD")" = "COMMENT" ] || fail "8 event: $(jq -r .event "$FAKE_PAYLOAD")"
+jq -e '.body | startswith("문제 없음. 본인 PR 이라 승인 대신 코멘트로 남긴다.")' "$FAKE_PAYLOAD" >/dev/null || fail "8 head"
+
+# 9. 남의 PR 에 verdict ok → APPROVE 그대로
+: > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
+FAKE_AUTHOR=other bash scripts/review.sh >/dev/null 2>&1 || fail "9 exit"
+[ "$(jq -r .event "$FAKE_PAYLOAD")" = "APPROVE" ] || fail "9 event"
 
 rm -f work-last-payload.json
 echo "PASS"
