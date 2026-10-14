@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "verdict": { "type": "string", "enum": ["ok", "check"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "line": { "type": "integer" },
+          "severity": { "type": "string", "enum": ["bug", "rule", "note"] },
+          "body": { "type": "string" }
+        },
+        "required": ["path", "line", "severity", "body"]
+      }
+    }
+  },
+  "required": ["summary", "verdict", "findings"]
+}
