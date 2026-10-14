@@ -11,6 +11,10 @@ on:
       pr:
         description: 'PR 번호'
         required: false
+      dry_run:
+        description: 'true 면 리뷰를 만들기만 하고 제출하지 않는다'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write   # keepalive 빈 커밋용. 조직 레포 접근은 GH_PAT 로만 한다
@@ -36,15 +40,15 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code@2.1.296 >/dev/null 2>&1
 
-      # 퍼블릭 레포: 이 스텝의 출력은 고정 문구뿐이어야 한다 (scripts/review.sh 참고)
+      # 퍼블릭 레포: 이 스텝의 출력은 고정 문구뿐이어야 한다 (scripts/review.sh 참고).
+      # 수동 실행 입력(repo/pr/dry_run)은 env 로 넘기지 않는다 — 러너가 env 값을 로그에 찍는다.
+      # 스크립트가 $GITHUB_EVENT_PATH 에서 직접 읽는다.
       - name: Review
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ORG: ${{ secrets.ORG }}
           ME: ${{ secrets.ME }}
-          FORCE_REPO: ${{ inputs.repo }}
-          FORCE_PR: ${{ inputs.pr }}
         run: bash scripts/review.sh
 
       - name: Keepalive

@@ -10,6 +10,13 @@ trap 'rm -rf "$WORK"' EXIT
 : "${ORG:?}" "${ME:?}"
 [ -n "${GH_PAT:-}" ] && export GH_TOKEN="$GH_PAT"
 
+# 수동 실행(workflow_dispatch) 입력은 env 가 아니라 이벤트 파일에서 읽는다. env 값은 러너가 로그에 찍기 때문이다.
+if [ -z "${FORCE_REPO:-}" ] && [ -n "${GITHUB_EVENT_PATH:-}" ] && [ -f "$GITHUB_EVENT_PATH" ]; then
+  FORCE_REPO=$(jq -r '.inputs.repo // empty' "$GITHUB_EVENT_PATH" 2>/dev/null)
+  FORCE_PR=$(jq -r '.inputs.pr // empty' "$GITHUB_EVENT_PATH" 2>/dev/null)
+  [ "$(jq -r '.inputs.dry_run // "false"' "$GITHUB_EVENT_PATH" 2>/dev/null)" = "true" ] && export DRY_RUN=1
+fi
+
 if [ -n "${FORCE_REPO:-}" ] && [ -n "${FORCE_PR:-}" ]; then
   jq -n --arg r "$FORCE_REPO" --argjson n "$FORCE_PR" '[{number:$n, repository:{nameWithOwner:$r}}]' > "$WORK/prs.json"
 else

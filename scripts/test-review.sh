@@ -106,5 +106,18 @@ jq -e '.body | startswith("문제 없음. 본인 PR 이라 승인 대신 코멘�
 FAKE_AUTHOR=other bash scripts/review.sh >/dev/null 2>&1 || fail "9 exit"
 [ "$(jq -r .event "$FAKE_PAYLOAD")" = "APPROVE" ] || fail "9 event"
 
+# 10. workflow_dispatch 입력은 env 가 아니라 이벤트 파일에서 읽는다(env 는 러너가 로그에 찍는다)
+: > "$FAKE_LOG"
+echo '{"inputs":{"repo":"acme/evt","pr":"5","dry_run":"true"}}' > "$tmp/event.json"
+GITHUB_EVENT_PATH="$tmp/event.json" bash scripts/review.sh >/dev/null 2>&1 || fail "10 exit"
+grep -q "search prs" "$FAKE_LOG" && fail "10 searched"
+grep -q "repo clone acme/evt" "$FAKE_LOG" || fail "10 event clone"
+grep -q "api -X POST" "$FAKE_LOG" && fail "10 dry_run input ignored"
+
+# 11. 이벤트 파일에 inputs 가 없으면(schedule) 검색으로 간다
+: > "$FAKE_LOG"; echo '{"schedule":"*/5 * * * *"}' > "$tmp/event.json"; echo '[]' > "$FAKE_SEARCH"
+GITHUB_EVENT_PATH="$tmp/event.json" bash scripts/review.sh >/dev/null 2>&1 || fail "11 exit"
+grep -q "search prs" "$FAKE_LOG" || fail "11 no search"
+
 rm -f work-last-payload.json
 echo "PASS"
