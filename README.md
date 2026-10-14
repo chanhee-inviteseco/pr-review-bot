@@ -28,6 +28,28 @@
 
 실행 로그는 누구나 본다. 스크립트는 조직 레포에서 온 어떤 문자열도 stdout/stderr 에 찍지 않는다. 모든 명령 출력은 파일 또는 `/dev/null` 로 간다. 새 명령을 추가할 때도 같은 규칙을 지킨다. `ACTIONS_STEP_DEBUG` 를 켜지 않는다. 레포 설정에서 Actions 로그 보관은 1일. collaborator 를 추가하지 않는다(워크플로를 고칠 수 있는 사람만 시크릿을 빼낼 수 있다).
 
+## 깨우기 (외부 cron)
+
+GitHub 의 `schedule` 트리거는 2026-08 말부터 새 레포에서 돌지 않는 사례가 많다(이 레포도 2시간 넘게 0건). 그래서 외부 cron 이 5분마다 `workflow_dispatch` API 를 호출해 깨운다. 워크플로의 `schedule` 은 GitHub 이 정상화되면 같이 돌도록 남겨 둔다. 두 트리거가 겹쳐도 `concurrency` 로 줄 서고, 같은 head 는 다시 리뷰하지 않는다.
+
+- 토큰: fine-grained PAT, Resource owner = 본인 계정, 대상 레포 = 이 레포 하나, 권한 = Actions: Read and write. 조직 승인 불필요. 이 토큰은 이 레포의 워크플로를 깨우는 것만 할 수 있다.
+- 외부 cron(예: cron-job.org) 설정:
+
+| 항목 | 값 |
+|---|---|
+| Method | POST |
+| URL | `https://api.github.com/repos/<계정>/pr-review-bot/actions/workflows/review.yml/dispatches` |
+| Header | `Authorization: Bearer <토큰>` |
+| Header | `Accept: application/vnd.github+json` |
+| Body | `{"ref":"main"}` |
+| 주기 | 5분 |
+
+성공하면 GitHub 이 204 를 돌려주고 Actions 탭에 `workflow_dispatch` 실행이 생긴다.
+
+| 토큰 | 발급일 | 만료일 |
+|---|---|---|
+| 외부 cron 용 PAT | | |
+
 ## 유지
 
 GitHub 은 레포에 60일간 커밋이 없으면 schedule 워크플로를 자동으로 끈다. `scripts/keepalive.sh` 가 매 실행 끝에 마지막 커밋이 50일을 넘었는지 보고 빈 커밋을 올려 막는다. 그래도 꺼졌으면 Actions 탭에서 다시 켠다.
