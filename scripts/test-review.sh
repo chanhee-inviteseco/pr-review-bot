@@ -20,7 +20,10 @@ case "$1 $2" in
       && git checkout -q -b pr && git commit -q --allow-empty -m pr \
       && { [ "${FAKE_NO_ORIGIN:-}" = "1" ] || git remote add origin "$4"; }) ;;
   "pr checkout") ;;
-  "pr view") echo "{\"baseRefName\":\"develop\",\"headRefOid\":\"deadbeef\",\"author\":{\"login\":\"${FAKE_AUTHOR:-other}\"}}" ;;
+  "pr view")
+    # FAKE_REQUESTED=0 이면 내가 더 이상 요청된 리뷰어가 아니다(리뷰 제출로 해소됐는데 검색 색인이 늦은 경우)
+    if [ "${FAKE_REQUESTED:-1}" = "0" ]; then rr='[]'; else rr="[{\"login\":\"$ME\"},{\"login\":\"other\"}]"; fi
+    echo "{\"baseRefName\":\"develop\",\"headRefOid\":\"deadbeef\",\"author\":{\"login\":\"${FAKE_AUTHOR:-other}\"},\"reviewRequests\":$rr}" ;;
   "api "*)
     case "$*" in *"-X POST"*) ;; *) echo "${FAKE_EXISTING_REVIEWS:-0}"; exit 0 ;; esac   # GET: 이 head 에 내 리뷰 수
     cp "$6" "$FAKE_PAYLOAD" 2>/dev/null
@@ -153,12 +156,17 @@ echo '{"structured_output":{"summary":"요약","verdict":"check","findings":[{"p
 CLAUDE_CODE_OAUTH_TOKEN=tok-value bash scripts/review.sh >/dev/null 2>&1 && fail "13c exit should be 1"
 grep -q "api -X POST" "$FAKE_LOG" && fail "13c submitted a review containing the oauth token"
 
-# 14. 이 head 에 내 리뷰가 이미 있으면(검색 색인 지연·요청 미해소) 다시 리뷰하지 않는다
+# 14. 검색엔 잡혔지만 live 로 보면 내가 요청된 리뷰어가 아니면(제출로 해소, 색인 지연) 리뷰하지 않는다
 : > "$FAKE_LOG"
 echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
-out=$(FAKE_EXISTING_REVIEWS=1 bash scripts/review.sh 2>&1) || fail "14 exit"
-grep -q "claude -p" "$FAKE_LOG" && fail "14 claude ran for an already reviewed head"
-grep -q "already reviewed" <<<"$out" || fail "14 message: $out"
+out=$(FAKE_REQUESTED=0 bash scripts/review.sh 2>&1) || fail "14 exit"
+grep -q "claude -p" "$FAKE_LOG" && fail "14 claude ran although I am not a requested reviewer"
+grep -q "not requested" <<<"$out" || fail "14 message: $out"
+
+# 19. 같은 head 에 내 리뷰가 이미 있어도, 다시 요청된 상태면 다시 리뷰한다(재요청)
+: > "$FAKE_LOG"
+FAKE_EXISTING_REVIEWS=1 bash scripts/review.sh >/dev/null 2>&1 || fail "19 exit"
+grep -q "claude -p" "$FAKE_LOG" || fail "19 re-request on the same head was skipped"
 
 # 15. 수동 실행 입력이 반쯤이거나 번호가 아니면 실패로 끝낸다(조용히 검색으로 빠지지 않는다)
 : > "$FAKE_LOG"; echo '[]' > "$FAKE_SEARCH"

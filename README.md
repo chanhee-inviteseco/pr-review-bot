@@ -7,7 +7,7 @@
 1. `gh search prs --review-requested=$ME --owner=$ORG --state=open --draft=false`
 2. PR 마다 clone → diff 와 변경 파일 목록을 `.pr-review/` 에 써 두고 → `claude -p` (Read/Grep/Glob 만, Bash 없음. CLAUDE.md 와 diff 를 읽고 JSON 으로 리뷰) → 리뷰 API 한 번에 제출
    - 승인 규칙: 확실한 오류(`bug`)가 없으면 Approve. 규칙 위반(`rule`)·참고(`note`)는 해당 줄 코멘트로만 달린다. diff 를 못 읽어 리뷰 자체를 못 하면 Comment 로 "확인 권장" 만 남긴다
-3. 리뷰를 제출하면 GitHub 이 요청을 해소하므로 다음 tick 에 다시 잡히지 않는다. "리뷰 재요청" 을 누르면 다시 돈다.
+3. 리뷰를 제출하면 GitHub 이 요청을 해소하므로 다음 tick 에 다시 잡히지 않는다. "리뷰 재요청" 을 누르면(같은 커밋이어도) 다시 돈다. 가드는 live 로 "지금 내가 요청된 리뷰어인가" 만 본다.
 
 ## 시크릿 (Settings → Secrets → Actions)
 

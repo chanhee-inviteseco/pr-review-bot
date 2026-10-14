@@ -10,17 +10,17 @@ rm -rf "$dir"
 gh repo clone "$repo" "$dir" -- -q >/dev/null 2>&1 || { echo "clone failed"; exit 1; }
 cd "$dir" || exit 1
 gh pr checkout "$number" >/dev/null 2>&1 || { echo "checkout failed"; exit 1; }
-gh pr view "$number" --json baseRefName,headRefOid,author > "$work/pr.json" 2>/dev/null || { echo "view failed"; exit 1; }
+gh pr view "$number" --json baseRefName,headRefOid,author,reviewRequests > "$work/pr.json" 2>/dev/null || { echo "view failed"; exit 1; }
 base=$(jq -r .baseRefName "$work/pr.json")
 head_sha=$(jq -r .headRefOid "$work/pr.json")
 author=$(jq -r '.author.login // ""' "$work/pr.json")
 
-# 이 head 에 내 리뷰가 이미 있으면 끝. 검색 색인 지연이나 요청 미해소로 같은 PR 이 다시 와도 중복 리뷰를 막는다.
+# 가드: 검색 색인은 늦을 수 있으니 live 로 "지금 내가 요청된 리뷰어인가" 를 본다.
+# 리뷰를 제출하면 요청이 해소돼 빠지고, 같은 커밋에 다시 요청하면 다시 들어온다 → 재요청은 다시 리뷰한다.
 # 수동 지정(SKIP_GUARD)은 "지금 다시 리뷰" 라는 뜻이므로 가드를 건너뛴다.
 if [ -z "${SKIP_GUARD:-}" ]; then
-  existing=$(gh api "repos/$repo/pulls/$number/reviews" \
-    --jq "[.[] | select(.user.login==\"${ME:-}\" and .commit_id==\"$head_sha\")] | length" 2>/dev/null || echo 0)
-  [ "${existing:-0}" != "0" ] && { echo "already reviewed"; exit 0; }
+  requested=$(jq --arg me "${ME:-}" '[.reviewRequests[]? | select(.login==$me)] | length' "$work/pr.json" 2>/dev/null || echo 0)
+  [ "${requested:-0}" = "0" ] && { echo "not requested"; exit 0; }
 fi
 
 # base 를 못 가져오면 diff 를 볼 수 없다. diff 없이 ok 가 나오면 승인이 나가므로 여기서 닫는다.
