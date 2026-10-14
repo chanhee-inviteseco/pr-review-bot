@@ -20,12 +20,16 @@ case "$1 $2" in
       && git checkout -q -b pr && git commit -q --allow-empty -m pr \
       && { [ "${FAKE_NO_ORIGIN:-}" = "1" ] || git remote add origin "$4"; }) ;;
   "pr checkout") ;;
-  "pr view")
-    # FAKE_REQUESTED=0 이면 내가 더 이상 요청된 리뷰어가 아니다(리뷰 제출로 해소됐는데 검색 색인이 늦은 경우)
-    if [ "${FAKE_REQUESTED:-1}" = "0" ]; then rr='[]'; else rr="[{\"login\":\"$ME\"},{\"login\":\"other\"}]"; fi
-    echo "{\"baseRefName\":\"develop\",\"headRefOid\":\"deadbeef\",\"author\":{\"login\":\"${FAKE_AUTHOR:-other}\"},\"reviewRequests\":$rr}" ;;
   "api "*)
-    case "$*" in *"-X POST"*) ;; *) echo "${FAKE_EXISTING_REVIEWS:-0}"; exit 0 ;; esac   # GET: 이 head 에 내 리뷰 수
+    case "$*" in
+      *"-X POST"*) ;;
+      *"/reviews"*) echo "${FAKE_EXISTING_REVIEWS:-0}"; exit 0 ;;
+      *)
+        # GET repos/{owner}/{repo}/pulls/{n} (REST). FAKE_REQUESTED=0 이면 내가 더 이상 요청된 리뷰어가 아니다
+        if [ "${FAKE_REQUESTED:-1}" = "0" ]; then rr='[]'; else rr="[{\"login\":\"$ME\"},{\"login\":\"other\"}]"; fi
+        echo "{\"base\":{\"ref\":\"develop\"},\"head\":{\"sha\":\"deadbeef\"},\"user\":{\"login\":\"${FAKE_AUTHOR:-other}\"},\"requested_reviewers\":$rr}"
+        exit 0 ;;
+    esac
     cp "$6" "$FAKE_PAYLOAD" 2>/dev/null
     if [ "${FAKE_API_422_FIRST:-}" = "1" ] && [ "$(grep -c '^gh api -X POST' "$FAKE_LOG")" -eq 1 ]; then
       echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1

@@ -10,16 +10,17 @@ rm -rf "$dir"
 gh repo clone "$repo" "$dir" -- -q >/dev/null 2>&1 || { echo "clone failed"; exit 1; }
 cd "$dir" || exit 1
 gh pr checkout "$number" >/dev/null 2>&1 || { echo "checkout failed"; exit 1; }
-gh pr view "$number" --json baseRefName,headRefOid,author,reviewRequests > "$work/pr.json" 2>/dev/null || { echo "view failed"; exit 1; }
-base=$(jq -r .baseRefName "$work/pr.json")
-head_sha=$(jq -r .headRefOid "$work/pr.json")
-author=$(jq -r '.author.login // ""' "$work/pr.json")
+# REST 로 본다. gh pr view 의 reviewRequests 는 GraphQL 로 팀까지 조회해 read:org 스코프가 필요하고, repo 스코프 PAT 로는 실패한다.
+gh api "repos/$repo/pulls/$number" > "$work/pr.json" 2>/dev/null || { echo "view failed"; exit 1; }
+base=$(jq -r .base.ref "$work/pr.json")
+head_sha=$(jq -r .head.sha "$work/pr.json")
+author=$(jq -r '.user.login // ""' "$work/pr.json")
 
 # 가드: 검색 색인은 늦을 수 있으니 live 로 "지금 내가 요청된 리뷰어인가" 를 본다.
 # 리뷰를 제출하면 요청이 해소돼 빠지고, 같은 커밋에 다시 요청하면 다시 들어온다 → 재요청은 다시 리뷰한다.
 # 수동 지정(SKIP_GUARD)은 "지금 다시 리뷰" 라는 뜻이므로 가드를 건너뛴다.
 if [ -z "${SKIP_GUARD:-}" ]; then
-  requested=$(jq --arg me "${ME:-}" '[.reviewRequests[]? | select(.login==$me)] | length' "$work/pr.json" 2>/dev/null || echo 0)
+  requested=$(jq --arg me "${ME:-}" '[.requested_reviewers[]? | select(.login==$me)] | length' "$work/pr.json" 2>/dev/null || echo 0)
   [ "${requested:-0}" = "0" ] && { echo "not requested"; exit 0; }
 fi
 
