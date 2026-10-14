@@ -14,12 +14,17 @@ echo "gh $*" >> "$FAKE_LOG"
 case "$1 $2" in
   "search prs") cat "$FAKE_SEARCH" ;;
   "auth setup-git") ;;
-  "repo clone") mkdir -p "$4" && (cd "$4" && git init -q && git commit -q --allow-empty -m init && git branch -q -M develop && git checkout -q -b pr) ;;
+  "repo clone")
+    # 자기 자신을 origin 으로 둬서 git fetch origin develop 이 성공한다. FAKE_NO_ORIGIN=1 이면 fetch 가 실패한다
+    mkdir -p "$4" && (cd "$4" && git init -q && git commit -q --allow-empty -m init && git branch -q -M develop \
+      && git checkout -q -b pr && git commit -q --allow-empty -m pr \
+      && { [ "${FAKE_NO_ORIGIN:-}" = "1" ] || git remote add origin "$4"; }) ;;
   "pr checkout") ;;
   "pr view") echo "{\"baseRefName\":\"develop\",\"headRefOid\":\"deadbeef\",\"author\":{\"login\":\"${FAKE_AUTHOR:-other}\"}}" ;;
   "api "*)
+    case "$*" in *"-X POST"*) ;; *) echo "${FAKE_EXISTING_REVIEWS:-0}"; exit 0 ;; esac   # GET: 이 head 에 내 리뷰 수
     cp "$6" "$FAKE_PAYLOAD" 2>/dev/null
-    if [ "${FAKE_API_422_FIRST:-}" = "1" ] && [ "$(grep -c '^gh api' "$FAKE_LOG")" -eq 1 ]; then
+    if [ "${FAKE_API_422_FIRST:-}" = "1" ] && [ "$(grep -c '^gh api -X POST' "$FAKE_LOG")" -eq 1 ]; then
       echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1
     fi
     echo '{}' ;;
@@ -34,6 +39,7 @@ cat > "$tmp/bin/claude" <<'EOF'
 #!/usr/bin/env bash
 echo "claude $*" >> "$FAKE_LOG"
 echo "claude-env GH_TOKEN=${GH_TOKEN:-unset} GH_PAT=${GH_PAT:-unset}" >> "$FAKE_LOG"
+cat >/dev/null   # 실제 claude -p 는 stdin 이 TTY 가 아니면 끝까지 읽는다. 루프의 남은 대상을 삼키는 버그 재현용
 [ "${FAKE_CLAUDE_FAIL:-}" = "1" ] && exit 1
 if [ "${FAKE_CLAUDE_TEXT_FIRST:-}" = "1" ] && [ "$(grep -c '^claude -p' "$FAKE_LOG")" -eq 1 ]; then
   echo '{"result":"텍스트만"}'; exit 0
@@ -128,6 +134,46 @@ GH_PAT=dummy-pat bash scripts/review.sh >/dev/null 2>&1 || fail "12 exit"
 grep -q "^claude-env GH_TOKEN=unset GH_PAT=unset$" "$FAKE_LOG" || fail "12 github token reached claude"
 grep -q -- "--setting-sources user" "$FAKE_LOG" || fail "12 project settings not excluded"
 grep -q -- "--strict-mcp-config" "$FAKE_LOG" || fail "12 project mcp not excluded"
+grep -q -- "--disallowedTools Read(//proc/\*\*),Bash(git diff --no-index\*)" "$FAKE_LOG" || fail "12 /proc and --no-index not denied"
+
+# 13. 리뷰 JSON 에 토큰(값 또는 접두)이 섞이면 제출하지 않는다 — 프롬프트 인젝션으로 토큰이 본문에 실리는 경로 차단
+echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"
+: > "$FAKE_LOG"
+echo '{"structured_output":{"summary":"요약 ghp_abcdef0123456789","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
+out=$(bash scripts/review.sh 2>&1) && fail "13a exit should be 1"
+grep -q "api -X POST" "$FAKE_LOG" && fail "13a submitted a review containing a token prefix"
+grep -q "review rejected" <<<"$out" || fail "13a message: $out"
+: > "$FAKE_LOG"
+echo '{"structured_output":{"summary":"요약","verdict":"check","findings":[{"path":"x","line":1,"severity":"note","body":"dummy-pat 가 보임"}]}}' > "$FAKE_CLAUDE_OUT"
+GH_PAT=dummy-pat bash scripts/review.sh >/dev/null 2>&1 && fail "13b exit should be 1"
+grep -q "api -X POST" "$FAKE_LOG" && fail "13b submitted a review containing the PAT value"
+: > "$FAKE_LOG"
+echo '{"structured_output":{"summary":"요약","verdict":"check","findings":[{"path":"x","line":1,"severity":"note","body":"tok-value 가 보임"}]}}' > "$FAKE_CLAUDE_OUT"
+CLAUDE_CODE_OAUTH_TOKEN=tok-value bash scripts/review.sh >/dev/null 2>&1 && fail "13c exit should be 1"
+grep -q "api -X POST" "$FAKE_LOG" && fail "13c submitted a review containing the oauth token"
+
+# 14. 이 head 에 내 리뷰가 이미 있으면(검색 색인 지연·요청 미해소) 다시 리뷰하지 않는다
+: > "$FAKE_LOG"
+echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
+out=$(FAKE_EXISTING_REVIEWS=1 bash scripts/review.sh 2>&1) || fail "14 exit"
+grep -q "claude -p" "$FAKE_LOG" && fail "14 claude ran for an already reviewed head"
+grep -q "already reviewed" <<<"$out" || fail "14 message: $out"
+
+# 15. 수동 실행 입력이 반쯤이거나 번호가 아니면 실패로 끝낸다(조용히 검색으로 빠지지 않는다)
+: > "$FAKE_LOG"; echo '[]' > "$FAKE_SEARCH"
+echo '{"inputs":{"repo":"acme/evt","pr":""}}' > "$tmp/event.json"
+out=$(GITHUB_EVENT_PATH="$tmp/event.json" bash scripts/review.sh 2>&1) && fail "15a exit should be 1"
+grep -q "search prs" "$FAKE_LOG" && fail "15a fell through to search"
+grep -q "bad inputs" <<<"$out" || fail "15a message: $out"
+echo '{"inputs":{"repo":"acme/evt","pr":"#322"}}' > "$tmp/event.json"
+GITHUB_EVENT_PATH="$tmp/event.json" bash scripts/review.sh >/dev/null 2>&1 && fail "15b exit should be 1"
+
+# 16. base 를 못 가져오면(diff 불가) 리뷰하지 않는다 — diff 없이 ok 를 내면 승인이 나가기 때문
+: > "$FAKE_LOG"
+echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"
+out=$(FAKE_NO_ORIGIN=1 bash scripts/review.sh 2>&1) && fail "16 exit should be 1"
+grep -q "claude -p" "$FAKE_LOG" && fail "16 claude ran without a diff"
+grep -q "diff failed" <<<"$out" || fail "16 message: $out"
 
 rm -f work-last-payload.json
 echo "PASS"

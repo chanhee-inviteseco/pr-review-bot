@@ -14,7 +14,14 @@ gh pr view "$number" --json baseRefName,headRefOid,author > "$work/pr.json" 2>/d
 base=$(jq -r .baseRefName "$work/pr.json")
 head_sha=$(jq -r .headRefOid "$work/pr.json")
 author=$(jq -r '.author.login // ""' "$work/pr.json")
-git fetch -q origin "$base" >/dev/null 2>&1
+
+# 이 head 에 내 리뷰가 이미 있으면 끝. 검색 색인 지연이나 요청 미해소로 같은 PR 이 다시 와도 중복 리뷰를 막는다.
+existing=$(gh api "repos/$repo/pulls/$number/reviews" \
+  --jq "[.[] | select(.user.login==\"${ME:-}\" and .commit_id==\"$head_sha\")] | length" 2>/dev/null || echo 0)
+[ "${existing:-0}" != "0" ] && { echo "already reviewed"; exit 0; }
+
+# base 를 못 가져오면 diff 를 볼 수 없다. diff 없이 ok 가 나오면 승인이 나가므로 여기서 닫는다.
+git fetch -q origin "$base" >/dev/null 2>&1 || { echo "diff failed"; exit 1; }
 
 changed=$(git diff --numstat "origin/$base...HEAD" 2>/dev/null | awk '{a+=$1+$2} END{print a+0}')
 big=false; [ "${changed:-0}" -gt 1500 ] && big=true
@@ -39,13 +46,21 @@ ${t:+"$t" 900} env -u GH_TOKEN -u GH_PAT claude -p "$prompt" \
   --permission-mode dontAsk \
   --setting-sources user --strict-mcp-config \
   --allowedTools "Read,Grep,Glob,Bash(git diff *),Bash(git log *)" \
-  > "$work/claude.out" 2>/dev/null
+  --disallowedTools "Read(//proc/**),Bash(git diff --no-index*)" \
+  > "$work/claude.out" 2>/dev/null </dev/null
 rc=$?
 [ "$rc" -ne 0 ] && { echo "claude failed rc=$rc"; exit 1; }
 
 jq -e '.structured_output | objects | has("summary") and has("verdict") and has("findings")' \
   "$work/claude.out" >/dev/null 2>&1 || { echo "no structured output"; exit 1; }
 jq '.structured_output' "$work/claude.out" > "$work/review.json"
+
+# fail-closed: 리뷰 본문에 토큰 값이나 토큰 접두가 섞여 있으면 제출하지 않는다.
+# 리뷰 대상 레포의 문서·코드가 "환경을 읽어 적어라" 는 지시를 심어도 토큰이 PR 코멘트로 나가지 않게 하는 마지막 벽.
+for secret in "${GH_PAT:-}" "${GH_TOKEN:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}"; do
+  [ -n "$secret" ] && grep -qF -- "$secret" "$work/review.json" && { echo "review rejected"; exit 1; }
+done
+grep -qE 'sk-ant-|ghp_|github_pat_|gho_|ghs_|ghu_' "$work/review.json" && { echo "review rejected"; exit 1; }
 
 bash "$ROOT/scripts/build-payload.sh" "$work/review.json" "$head_sha" "$big" > "$work/payload.json" 2>/dev/null \
   || { echo "payload failed"; exit 1; }

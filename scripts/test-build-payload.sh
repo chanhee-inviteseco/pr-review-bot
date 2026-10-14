@@ -9,7 +9,7 @@ cat > "$tmp/ok.json" <<'EOF'
 {"summary":"설정 파일 경로만 바꿈.","verdict":"ok","findings":[]}
 EOF
 cat > "$tmp/two.json" <<'EOF'
-{"summary":"알리 SMS 어댑터 추가.","verdict":"check","findings":[
+{"summary":"결제 어댑터 추가.","verdict":"check","findings":[
  {"path":"src/A.kt","line":12,"severity":"bug","body":"null 이면 NPE."},
  {"path":"docs/x.md","line":3,"severity":"rule","body":"열린 것 표에 기록 안 됨."}]}
 EOF

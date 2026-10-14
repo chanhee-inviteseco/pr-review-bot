@@ -31,7 +31,11 @@ jobs:
     env:
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
     steps:
+      # persist-credentials: false — GITHUB_TOKEN 을 .git/config 에 남기지 않는다(Claude 가 Read 로 읽을 수 있는 파일).
+      # keepalive 푸시는 그 스텝의 env 로만 토큰을 받는다.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -53,4 +57,6 @@ jobs:
 
       - name: Keepalive
         if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/keepalive.sh

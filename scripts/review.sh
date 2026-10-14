@@ -17,7 +17,11 @@ if [ -z "${FORCE_REPO:-}" ] && [ -n "${GITHUB_EVENT_PATH:-}" ] && [ -f "$GITHUB_
   [ "$(jq -r '.inputs.dry_run // "false"' "$GITHUB_EVENT_PATH" 2>/dev/null)" = "true" ] && export DRY_RUN=1
 fi
 
-if [ -n "${FORCE_REPO:-}" ] && [ -n "${FORCE_PR:-}" ]; then
+if [ -n "${FORCE_REPO:-}" ] || [ -n "${FORCE_PR:-}" ]; then
+  # 수동 지정은 둘 다 있어야 하고 번호는 숫자여야 한다. 반쯤 온 입력으로 조용히 검색에 빠지지 않는다.
+  if [ -z "${FORCE_REPO:-}" ] || [ -z "${FORCE_PR:-}" ] || ! [[ "$FORCE_PR" =~ ^[0-9]+$ ]]; then
+    echo "bad inputs"; exit 1
+  fi
   jq -n --arg r "$FORCE_REPO" --argjson n "$FORCE_PR" '[{number:$n, repository:{nameWithOwner:$r}}]' > "$WORK/prs.json"
 else
   gh search prs --review-requested="$ME" --owner="$ORG" --state=open --draft=false \
@@ -34,7 +38,8 @@ echo "targets: $count"
 failed=0
 while IFS=$'\t' read -r repo number; do
   echo "::add-mask::$repo"
-  if bash "$ROOT/scripts/review-one.sh" "$repo" "$number" "$WORK"; then
+  # </dev/null: 자식(특히 claude -p)이 루프의 stdin 을 읽어 남은 대상을 삼키지 못하게 한다
+  if bash "$ROOT/scripts/review-one.sh" "$repo" "$number" "$WORK" </dev/null; then
     echo "reviewed"
   else
     echo "one failed"; failed=1
