@@ -29,11 +29,15 @@ base: origin/$base
 
 # macOS 로컬에는 timeout 이 없을 수 있다(coreutils 의 gtimeout). 없으면 상한 없이 돈다.
 t="$(command -v timeout || command -v gtimeout || true)"
-${t:+"$t" 900} claude -p "$prompt" \
+# Claude 는 GitHub 토큰이 필요 없다. env 에서 빼서 리뷰 대상 레포의 훅·MCP 가 읽을 수 없게 한다.
+# --setting-sources user: 대상 레포의 .claude/settings.json(훅) 을 읽지 않는다. CLAUDE.md 는 그대로 읽는다.
+# --strict-mcp-config: 대상 레포의 .mcp.json 을 읽지 않는다.
+${t:+"$t" 900} env -u GH_TOKEN -u GH_PAT claude -p "$prompt" \
   --output-format json \
   --json-schema "$(cat "$ROOT/review.schema.json")" \
   --model claude-sonnet-5-5 --effort medium \
   --permission-mode dontAsk \
+  --setting-sources user --strict-mcp-config \
   --allowedTools "Read,Grep,Glob,Bash(git diff *),Bash(git log *)" \
   > "$work/claude.out" 2>/dev/null
 rc=$?

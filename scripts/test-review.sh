@@ -33,8 +33,9 @@ write_fake_claude() {
 cat > "$tmp/bin/claude" <<'EOF'
 #!/usr/bin/env bash
 echo "claude $*" >> "$FAKE_LOG"
+echo "claude-env GH_TOKEN=${GH_TOKEN:-unset} GH_PAT=${GH_PAT:-unset}" >> "$FAKE_LOG"
 [ "${FAKE_CLAUDE_FAIL:-}" = "1" ] && exit 1
-if [ "${FAKE_CLAUDE_TEXT_FIRST:-}" = "1" ] && [ "$(grep -c '^claude' "$FAKE_LOG")" -eq 1 ]; then
+if [ "${FAKE_CLAUDE_TEXT_FIRST:-}" = "1" ] && [ "$(grep -c '^claude -p' "$FAKE_LOG")" -eq 1 ]; then
   echo '{"result":"텍스트만"}'; exit 0
 fi
 cat "$FAKE_CLAUDE_OUT"
@@ -118,6 +119,15 @@ grep -q "api -X POST" "$FAKE_LOG" && fail "10 dry_run input ignored"
 : > "$FAKE_LOG"; echo '{"schedule":"*/5 * * * *"}' > "$tmp/event.json"; echo '[]' > "$FAKE_SEARCH"
 GITHUB_EVENT_PATH="$tmp/event.json" bash scripts/review.sh >/dev/null 2>&1 || fail "11 exit"
 grep -q "search prs" "$FAKE_LOG" || fail "11 no search"
+
+# 12. Claude 에는 GitHub 토큰을 넘기지 않고, 대상 레포의 settings 훅·.mcp.json 을 읽지 않는다
+#     (리뷰 대상 레포가 훅으로 env 를 빼내는 경로 차단)
+echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; : > "$FAKE_LOG"
+echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
+GH_PAT=dummy-pat bash scripts/review.sh >/dev/null 2>&1 || fail "12 exit"
+grep -q "^claude-env GH_TOKEN=unset GH_PAT=unset$" "$FAKE_LOG" || fail "12 github token reached claude"
+grep -q -- "--setting-sources user" "$FAKE_LOG" || fail "12 project settings not excluded"
+grep -q -- "--strict-mcp-config" "$FAKE_LOG" || fail "12 project mcp not excluded"
 
 rm -f work-last-payload.json
 echo "PASS"

@@ -17,10 +17,12 @@
 | `ORG` | 조직 이름. 값이 로그에 찍혀도 자동 마스킹되도록 시크릿에 둔다. README·커밋에도 적지 않는다 |
 | `ME` | 내 GitHub 계정명. 같은 이유로 시크릿에 둔다 |
 
-| 토큰 | 발급일 | 만료일 |
-|---|---|---|
-| GH_PAT | | |
-| CLAUDE_CODE_OAUTH_TOKEN | | |
+| 토큰 | 발급일 | 만료일 | 갱신 |
+|---|---|---|---|
+| GH_PAT | 2026-10-14 | 2027-01-12 (90일. 실제 값은 github.com/settings/tokens 에서 확인) | 새 PAT 발급 → `gh secret set GH_PAT` |
+| CLAUDE_CODE_OAUTH_TOKEN | 2026-10-14 | 2027-10-14 (`claude setup-token` 은 1년) | `claude setup-token` → `gh secret set CLAUDE_CODE_OAUTH_TOKEN` |
+
+만료되면 워크플로가 실패로 끝나고 GitHub 이 실패 메일을 보낸다. 그게 갱신 신호다.
 
 ## 로그 규율 (퍼블릭 레포)
 
