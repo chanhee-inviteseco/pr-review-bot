@@ -30,19 +30,28 @@ git fetch -q origin "$base" >/dev/null 2>&1 || { echo "diff failed"; exit 1; }
 changed=$(git diff --numstat "origin/$base...HEAD" 2>/dev/null | awk '{a+=$1+$2} END{print a+0}')
 big=false; [ "${changed:-0}" -gt 1500 ] && big=true
 
+# 승격 PR: base 가 배포 브랜치면 코드 리뷰가 아니라 "이번 승격에 뭐가 들어가나" 를 요약한다(prompt-promotion.md).
+# 들어간 코드는 각 feature PR 에서 이미 봤다. 머지 커밋 목록이 핵심 입력이라 commits.txt 를 따로 만든다.
+promotion=false; prompt_file="$ROOT/prompt.md"; flag=""
+case "$base" in
+  main|master|prod*|release|release/*) promotion=true; prompt_file="$ROOT/prompt-promotion.md"; flag=--promotion ;;
+esac
+
 # Claude 에 Bash 를 주지 않는다. diff 와 변경 파일 목록을 파일로 미리 만들어 Read 로 읽게 한다.
 # (Claude 가 cd/cat/grep/pipe 를 한 줄로 묶어 실행하면 통째로 거부돼 리뷰를 포기하던 문제)
 mkdir -p .pr-review
 git diff "origin/$base...HEAD" > .pr-review/diff.patch 2>/dev/null
 git diff --name-status "origin/$base...HEAD" > .pr-review/files.txt 2>/dev/null
+git log --first-parent --format='%h %s' "origin/$base..HEAD" > .pr-review/commits.txt 2>/dev/null
 
-prompt="$(cat "$ROOT/prompt.md")
+prompt="$(cat "$prompt_file")
 
 ---
 PR: #$number
 base: origin/$base
 변경 줄 수: $changed
-대형 PR: $big"
+대형 PR: $big
+승격 PR: $promotion"
 
 # macOS 로컬에는 timeout 이 없을 수 있다(coreutils 의 gtimeout). 없으면 상한 없이 돈다.
 t="$(command -v timeout || command -v gtimeout || true)"
@@ -75,7 +84,7 @@ for secret in "${GH_PAT:-}" "${GH_TOKEN:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}"; do
 done
 grep -qE 'sk-ant-|ghp_|github_pat_|gho_|ghs_|ghu_' "$work/review.json" && { echo "review rejected"; exit 1; }
 
-bash "$ROOT/scripts/build-payload.sh" "$work/review.json" "$head_sha" "$big" > "$work/payload.json" 2>/dev/null \
+bash "$ROOT/scripts/build-payload.sh" "$work/review.json" "$head_sha" "$big" $flag > "$work/payload.json" 2>/dev/null \
   || { echo "payload failed"; exit 1; }
 
 # GitHub 은 본인 PR 승인을 거부한다(422). 내가 연 PR 이면 Approve 를 Comment 로 내린다.
@@ -97,7 +106,7 @@ if gh api -X POST "repos/$repo/pulls/$number/reviews" --input "$work/payload.jso
 fi
 # 인라인 줄 위치를 GitHub 이 거부(422)하면 본문 목록으로 내려 한 번 더
 if grep -q "422" "$work/err" 2>/dev/null; then
-  bash "$ROOT/scripts/build-payload.sh" "$work/review.json" "$head_sha" "$big" --no-inline > "$work/payload.json" 2>/dev/null
+  bash "$ROOT/scripts/build-payload.sh" "$work/review.json" "$head_sha" "$big" $flag --no-inline > "$work/payload.json" 2>/dev/null
   gh api -X POST "repos/$repo/pulls/$number/reviews" --input "$work/payload.json" >/dev/null 2>&1 \
     && { echo "submitted without inline"; exit 0; }
 fi
