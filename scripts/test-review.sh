@@ -15,9 +15,11 @@ case "$1 $2" in
   "search prs") cat "$FAKE_SEARCH" ;;
   "auth setup-git") ;;
   "repo clone")
-    # 자기 자신을 origin 으로 둬서 git fetch origin develop 이 성공한다. FAKE_NO_ORIGIN=1 이면 fetch 가 실패한다
-    mkdir -p "$4" && (cd "$4" && git init -q && git commit -q --allow-empty -m init && git branch -q -M develop \
+    # 자기 자신을 origin 으로 둬서 git fetch origin $base 가 성공한다. FAKE_NO_ORIGIN=1 이면 fetch 가 실패한다
+    # FAKE_BASE 로 base 브랜치 이름을 바꾼다(승격 PR 판정). FAKE_BIG=1 이면 PR 쪽에 1600줄짜리 파일을 넣는다(대형 PR)
+    mkdir -p "$4" && (cd "$4" && git init -q && git commit -q --allow-empty -m init && git branch -q -M "${FAKE_BASE:-develop}" \
       && git checkout -q -b pr && git commit -q --allow-empty -m pr \
+      && { [ "${FAKE_BIG:-}" != "1" ] || { seq 1600 > big.txt && git add big.txt && git commit -q -m big; }; } \
       && { [ "${FAKE_NO_ORIGIN:-}" = "1" ] || git remote add origin "$4"; }) ;;
   "pr checkout") ;;
   "api "*)
@@ -27,7 +29,7 @@ case "$1 $2" in
       *)
         # GET repos/{owner}/{repo}/pulls/{n} (REST). FAKE_REQUESTED=0 이면 내가 더 이상 요청된 리뷰어가 아니다
         if [ "${FAKE_REQUESTED:-1}" = "0" ]; then rr='[]'; else rr="[{\"login\":\"$ME\"},{\"login\":\"other\"}]"; fi
-        echo "{\"base\":{\"ref\":\"develop\"},\"head\":{\"sha\":\"deadbeef\"},\"user\":{\"login\":\"${FAKE_AUTHOR:-other}\"},\"requested_reviewers\":$rr}"
+        echo "{\"base\":{\"ref\":\"${FAKE_BASE:-develop}\"},\"head\":{\"sha\":\"deadbeef\"},\"user\":{\"login\":\"${FAKE_AUTHOR:-other}\"},\"requested_reviewers\":$rr}"
         exit 0 ;;
     esac
     cp "$6" "$FAKE_PAYLOAD" 2>/dev/null
@@ -47,6 +49,7 @@ cat > "$tmp/bin/claude" <<'EOF'
 echo "claude $*" >> "$FAKE_LOG"
 echo "claude-env GH_TOKEN=${GH_TOKEN:-unset} GH_PAT=${GH_PAT:-unset}" >> "$FAKE_LOG"
 [ -f .pr-review/diff.patch ] && [ -f .pr-review/files.txt ] && echo "claude-diff present" >> "$FAKE_LOG"
+[ -s .pr-review/commits.txt ] && echo "claude-commits present" >> "$FAKE_LOG"
 cat >/dev/null   # 실제 claude -p 는 stdin 이 TTY 가 아니면 끝까지 읽는다. 루프의 남은 대상을 삼키는 버그 재현용
 [ "${FAKE_CLAUDE_FAIL:-}" = "1" ] && exit 1
 if [ "${FAKE_CLAUDE_TEXT_FIRST:-}" = "1" ] && [ "$(grep -c '^claude -p' "$FAKE_LOG")" -eq 1 ]; then
@@ -60,7 +63,7 @@ write_fake_gh; write_fake_claude
 export PATH="$tmp/bin:$PATH"
 export FAKE_LOG="$tmp/calls.log" FAKE_SEARCH="$tmp/search.json" FAKE_CLAUDE_OUT="$tmp/claude.json" FAKE_PAYLOAD="$tmp/payload.json"
 export ORG=acme ME=someone
-unset GH_PAT FAKE_API_422_FIRST FAKE_CLAUDE_FAIL FAKE_CLAUDE_TEXT_FIRST DRY_RUN FORCE_REPO FORCE_PR
+unset GH_PAT FAKE_API_422_FIRST FAKE_CLAUDE_FAIL FAKE_CLAUDE_TEXT_FIRST DRY_RUN FORCE_REPO FORCE_PR FAKE_BASE FAKE_BIG
 
 echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
 
@@ -207,6 +210,42 @@ echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; 
 echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]},"num_turns":9,"usage":{"input_tokens":1200,"cache_read_input_tokens":340000,"output_tokens":2100},"total_cost_usd":0.4321}' > "$FAKE_CLAUDE_OUT"
 out=$(bash scripts/review.sh 2>&1) || fail "20 exit"
 grep -q "^usage: turns=9 in=1200 cache_read=340000 out=2100 cost_usd=0.4321$" <<<"$out" || fail "20 usage line: $out"
+
+# 21. 승격 PR(base 가 main/master/release/*/prod*): 코드 리뷰 대신 승격 프롬프트로 포함 내역을 요약하고, 승인 + 사람 확인 문구
+echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"
+echo '{"structured_output":{"summary":"PR 3건 포함.","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
+for b in main master release/1.2 prod; do
+  : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
+  FAKE_BASE="$b" bash scripts/review.sh >/dev/null 2>&1 || fail "21 exit ($b)"
+  grep -q "승격 PR 의 1차" "$FAKE_LOG" || fail "21 promotion prompt not used ($b)"
+  grep -q "^claude-commits present$" "$FAKE_LOG" || fail "21 commits.txt not written ($b)"
+  [ "$(jq -r .event "$FAKE_PAYLOAD")" = "APPROVE" ] || fail "21 event ($b)"
+  jq -e '.body | startswith("승인합니다. 승격 PR 이라 포함 내역만 요약했습니다. 머지 전에 사람이 확인하세요.")' "$FAKE_PAYLOAD" >/dev/null || fail "21 head ($b)"
+done
+# 21b. develop 으로 가는 PR 은 승격이 아니다 → 일반 프롬프트, 일반 머리
+: > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
+FAKE_BASE=develop bash scripts/review.sh >/dev/null 2>&1 || fail "21b exit"
+grep -q "승격 PR 의 1차" "$FAKE_LOG" && fail "21b promotion prompt on a normal PR"
+jq -e '.body | startswith("문제 없음. 승인합니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "21b head"
+# 21c. 승격 PR 에서 422 재제출(--no-inline) 때도 승격 문구가 유지된다
+: > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
+echo '{"structured_output":{"summary":"요약","verdict":"check","findings":[{"path":"x","line":1,"severity":"bug","body":"b"}]}}' > "$FAKE_CLAUDE_OUT"
+FAKE_BASE=main FAKE_API_422_FIRST=1 bash scripts/review.sh >/dev/null 2>&1 || fail "21c exit"
+[ "$(grep -c 'api -X POST' "$FAKE_LOG")" = "2" ] || fail "21c retry"
+jq -e '.body | endswith("승격 PR 이라 포함 내역만 요약했습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "21c promotion note lost on retry"
+
+# 22. 대형 PR(변경 1500줄 초과) 에 bug 없음 → 승인하되 핵심 경로만 봤다고 머리에 적는다
+: > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
+echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
+FAKE_BIG=1 bash scripts/review.sh >/dev/null 2>&1 || fail "22 exit"
+grep -q "대형 PR: true" "$FAKE_LOG" || fail "22 big flag not passed to claude"
+[ "$(jq -r .event "$FAKE_PAYLOAD")" = "APPROVE" ] || fail "22 event"
+jq -e '.body | startswith("승인합니다. 변경이 커서 핵심 경로만 봤습니다. 머지 전에 사람이 확인하세요.")' "$FAKE_PAYLOAD" >/dev/null || fail "22 head"
+# 22b. 본인이 연 대형 PR → 승인 대신 코멘트, 머리의 "승인합니다." 만 바뀐다
+: > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
+FAKE_BIG=1 FAKE_AUTHOR=someone bash scripts/review.sh >/dev/null 2>&1 || fail "22b exit"
+[ "$(jq -r .event "$FAKE_PAYLOAD")" = "COMMENT" ] || fail "22b event"
+jq -e '.body | startswith("본인 PR 이라 승인 대신 코멘트로 남긴다. 변경이 커서 핵심 경로만 봤습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "22b head"
 
 rm -f work-last-payload.json work-last-claude.out
 echo "PASS"
