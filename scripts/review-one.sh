@@ -7,10 +7,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 dir="$work/repo"
 rm -rf "$dir"
 
-gh repo clone "$repo" "$dir" -- -q >/dev/null 2>&1 || { echo "clone failed"; exit 1; }
-cd "$dir" || exit 1
-gh pr checkout "$number" >/dev/null 2>&1 || { echo "checkout failed"; exit 1; }
 # REST 로 본다. gh pr view 의 reviewRequests 는 GraphQL 로 팀까지 조회해 read:org 스코프가 필요하고, repo 스코프 PAT 로는 실패한다.
+# 가드가 clone 전에 걸러내도록 먼저 본다. 건너뛴 PR 은 요청이 남아 매 tick 다시 잡히므로 clone 비용을 아낀다.
 gh api "repos/$repo/pulls/$number" > "$work/pr.json" 2>/dev/null || { echo "view failed"; exit 1; }
 base=$(jq -r .base.ref "$work/pr.json")
 head_sha=$(jq -r .head.sha "$work/pr.json")
@@ -18,11 +16,19 @@ author=$(jq -r '.user.login // ""' "$work/pr.json")
 
 # 가드: 검색 색인은 늦을 수 있으니 live 로 "지금 내가 요청된 리뷰어인가" 를 본다.
 # 리뷰를 제출하면 요청이 해소돼 빠지고, 같은 커밋에 다시 요청하면 다시 들어온다 → 재요청은 다시 리뷰한다.
+# 작성자가 SKIP_AUTHORS(시크릿, 쉼표 구분)에 있으면 리뷰하지 않는다. 계정명은 로그에 찍지 않는다.
 # 수동 지정(SKIP_GUARD)은 "지금 다시 리뷰" 라는 뜻이므로 가드를 건너뛴다.
 if [ -z "${SKIP_GUARD:-}" ]; then
   requested=$(jq --arg me "${ME:-}" '[.requested_reviewers[]? | select(.login==$me)] | length' "$work/pr.json" 2>/dev/null || echo 0)
   [ "${requested:-0}" = "0" ] && { echo "not requested"; exit 0; }
+  skip=$(jq -n --arg list "${SKIP_AUTHORS:-}" --arg a "$author" \
+    '$a != "" and ($list | ascii_downcase | split(",") | map(gsub("\\s"; "")) | index($a | ascii_downcase)) != null')
+  [ "$skip" = "true" ] && { echo "skipped author"; exit 0; }
 fi
+
+gh repo clone "$repo" "$dir" -- -q >/dev/null 2>&1 || { echo "clone failed"; exit 1; }
+cd "$dir" || exit 1
+gh pr checkout "$number" >/dev/null 2>&1 || { echo "checkout failed"; exit 1; }
 
 # base 를 못 가져오면 diff 를 볼 수 없다. diff 없이 ok 가 나오면 승인이 나가므로 여기서 닫는다.
 git fetch -q origin "$base" >/dev/null 2>&1 || { echo "diff failed"; exit 1; }

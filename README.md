@@ -19,6 +19,7 @@
 | `CLAUDE_CODE_OAUTH_TOKEN` | 로컬에서 `claude setup-token` |
 | `ORG` | 조직 이름. 값이 로그에 찍혀도 자동 마스킹되도록 시크릿에 둔다. README·커밋에도 적지 않는다 |
 | `ME` | 내 GitHub 계정명. 같은 이유로 시크릿에 둔다 |
+| `SKIP_AUTHORS` | (선택) 리뷰하지 않을 PR 작성자 계정명, 쉼표 구분(`a,b`). 대소문자 무시. 동료 계정명이라 같은 이유로 시크릿에 둔다. 넣고 빼려면 `gh secret set SKIP_AUTHORS --body 'a,b'`, 비우려면 `gh secret delete SKIP_AUTHORS`. 수동 실행(`repo`/`pr` 지정)에는 적용되지 않는다 |
 
 | 토큰 | 발급일 | 만료일 | 갱신 |
 |---|---|---|---|

@@ -247,5 +247,22 @@ FAKE_BIG=1 FAKE_AUTHOR=someone bash scripts/review.sh >/dev/null 2>&1 || fail "2
 [ "$(jq -r .event "$FAKE_PAYLOAD")" = "COMMENT" ] || fail "22b event"
 jq -e '.body | startswith("본인 PR 이라 승인 대신 코멘트로 남긴다. 변경이 커서 핵심 경로만 봤습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "22b head"
 
+# 23. 작성자가 SKIP_AUTHORS(쉼표 구분, 대소문자 무시)에 있으면 clone 도 리뷰도 하지 않는다. 출력에 계정명 없음
+echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; : > "$FAKE_LOG"
+echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
+out=$(SKIP_AUTHORS="x, Skip-Me ,y" FAKE_AUTHOR=skip-me bash scripts/review.sh 2>&1) || fail "23 exit"
+grep -q "repo clone" "$FAKE_LOG" && fail "23 cloned a skipped author's PR"
+grep -q "claude -p" "$FAKE_LOG" && fail "23 reviewed a skipped author's PR"
+grep -q "skipped author" <<<"$out" || fail "23 message: $out"
+grep -qi "skip-me" <<<"$out" && fail "23 leaked author: $out"
+# 23b. 목록에 없는 작성자는 그대로 리뷰한다
+: > "$FAKE_LOG"
+SKIP_AUTHORS="x,skip-me" FAKE_AUTHOR=other bash scripts/review.sh >/dev/null 2>&1 || fail "23b exit"
+grep -q "claude -p" "$FAKE_LOG" || fail "23b non-listed author was skipped"
+# 23c. 수동 지정(FORCE)은 "지금 리뷰" 이므로 목록에 있어도 리뷰한다
+: > "$FAKE_LOG"
+DRY_RUN=1 FORCE_REPO=acme/z FORCE_PR=42 SKIP_AUTHORS=skip-me FAKE_AUTHOR=skip-me bash scripts/review.sh >/dev/null 2>&1 || fail "23c exit"
+grep -q "claude -p" "$FAKE_LOG" || fail "23c forced run was blocked by SKIP_AUTHORS"
+
 rm -f work-last-payload.json work-last-claude.out
 echo "PASS"
