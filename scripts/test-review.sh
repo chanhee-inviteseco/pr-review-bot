@@ -123,7 +123,7 @@ echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; 
 echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
 FAKE_AUTHOR=someone bash scripts/review.sh >/dev/null 2>&1 || fail "8 exit"
 [ "$(jq -r .event "$FAKE_PAYLOAD")" = "COMMENT" ] || fail "8 event: $(jq -r .event "$FAKE_PAYLOAD")"
-jq -e '.body | startswith("문제 없음. 본인 PR 이라 승인 대신 코멘트로 남깁니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "8 head"
+jq -e '.body | startswith("**코멘트** · 본인 PR 이라 승인 대신 코멘트로 남김 · 지적 없음")' "$FAKE_PAYLOAD" >/dev/null || fail "8 head"
 
 # 9. 남의 PR 에 verdict ok → APPROVE 그대로
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
@@ -226,19 +226,19 @@ for b in main master release/1.2 prod; do
   grep -q "승격 PR 의 1차" "$FAKE_LOG" || fail "21 promotion prompt not used ($b)"
   grep -q "^claude-commits present$" "$FAKE_LOG" || fail "21 commits.txt not written ($b)"
   [ "$(jq -r .event "$FAKE_PAYLOAD")" = "APPROVE" ] || fail "21 event ($b)"
-  jq -e '.body | startswith("승인합니다. 승격 PR 이라 포함 내역만 요약했습니다. 머지 전에 사람이 확인하세요.")' "$FAKE_PAYLOAD" >/dev/null || fail "21 head ($b)"
+  jq -e '.body | startswith("**승인** · 지적 없음\n\n> [!NOTE]\n> 승격 PR 이라 포함 내역만 요약함. 머지 전 사람 확인 필요함.")' "$FAKE_PAYLOAD" >/dev/null || fail "21 head ($b)"
 done
 # 21b. develop 으로 가는 PR 은 승격이 아니다 → 일반 프롬프트, 일반 머리
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
 FAKE_BASE=develop bash scripts/review.sh >/dev/null 2>&1 || fail "21b exit"
 grep -q "승격 PR 의 1차" "$FAKE_LOG" && fail "21b promotion prompt on a normal PR"
-jq -e '.body | startswith("문제 없음. 승인합니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "21b head"
+jq -e '.body | startswith("**승인** · 지적 없음")' "$FAKE_PAYLOAD" >/dev/null || fail "21b head"
 # 21c. 승격 PR 에서 422 재제출(--no-inline) 때도 승격 문구가 유지된다
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
 echo '{"structured_output":{"summary":"요약","verdict":"check","findings":[{"path":"x","line":1,"severity":"bug","body":"b"}]}}' > "$FAKE_CLAUDE_OUT"
 FAKE_BASE=main FAKE_API_422_FIRST=1 bash scripts/review.sh >/dev/null 2>&1 || fail "21c exit"
 [ "$(grep -c 'api -X POST' "$FAKE_LOG")" = "2" ] || fail "21c retry"
-jq -e '.body | endswith("승격 PR 이라 포함 내역만 요약했습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "21c promotion note lost on retry"
+jq -e '.body | contains("> 승격 PR 이라 포함 내역만 요약함.")' "$FAKE_PAYLOAD" >/dev/null || fail "21c promotion note lost on retry"
 
 # 22. 대형 PR(변경 1500줄 초과) 에 bug 없음 → 승인하되 큰 틀만 봤고 PR 을 나눠 달라고 머리에 적는다
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
@@ -246,18 +246,18 @@ echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' >
 FAKE_BIG=1 bash scripts/review.sh >/dev/null 2>&1 || fail "22 exit"
 grep -q "대형 PR: true" "$FAKE_LOG" || fail "22 big flag not passed to claude"
 [ "$(jq -r .event "$FAKE_PAYLOAD")" = "APPROVE" ] || fail "22 event"
-jq -e '.body | startswith("승인합니다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다. 머지 전에 사람이 확인하세요.")' "$FAKE_PAYLOAD" >/dev/null || fail "22 head"
-# 22b. 본인이 연 대형 PR → 승인 대신 코멘트, 머리의 "승인합니다." 만 바뀐다
+jq -e '.body | startswith("**승인** · 지적 없음\n\n> [!NOTE]\n> 변경이 커서 큰 틀만 봄. 나눠 올리면 더 자세히 볼 수 있음. 머지 전 사람 확인 필요함.")' "$FAKE_PAYLOAD" >/dev/null || fail "22 head"
+# 22b. 본인이 연 대형 PR → 승인 대신 코멘트, 머리의 "**승인**" 만 바뀐다
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
 FAKE_BIG=1 FAKE_AUTHOR=someone bash scripts/review.sh >/dev/null 2>&1 || fail "22b exit"
 [ "$(jq -r .event "$FAKE_PAYLOAD")" = "COMMENT" ] || fail "22b event"
-jq -e '.body | startswith("본인 PR 이라 승인 대신 코멘트로 남깁니다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "22b head"
+jq -e '.body | startswith("**코멘트** · 본인 PR 이라 승인 대신 코멘트로 남김 · 지적 없음\n\n> [!NOTE]\n> 변경이 커서 큰 틀만 봄. 나눠 올리면 더 자세히 볼 수 있음. 머지 전 사람 확인 필요함.")' "$FAKE_PAYLOAD" >/dev/null || fail "22b head"
 
 # 22c. lock 파일만 큰 PR 은 대형 PR 이 아니다("PR 을 나눠 달라" 가 잘못 나가지 않는다)
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
 FAKE_BIG=lock bash scripts/review.sh >/dev/null 2>&1 || fail "22c exit"
 grep -q "대형 PR: false" "$FAKE_LOG" || fail "22c lock files counted as a large change"
-jq -e '.body | startswith("문제 없음. 승인합니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "22c head"
+jq -e '.body | startswith("**승인** · 지적 없음")' "$FAKE_PAYLOAD" >/dev/null || fail "22c head"
 
 # 23. 작성자가 SKIP_AUTHORS(쉼표 구분, 대소문자 무시)에 있으면 clone 도 리뷰도 하지 않는다. 출력에 계정명 없음
 echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; : > "$FAKE_LOG"

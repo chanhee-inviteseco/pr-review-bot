@@ -21,14 +21,14 @@ EOF
 out=$(bash scripts/build-payload.sh "$tmp/ok.json" abc123 false)
 [ "$(jq -r .event <<<"$out")" = "APPROVE" ] || fail "1 event"
 [ "$(jq -r .commit_id <<<"$out")" = "abc123" ] || fail "1 sha"
-jq -e '.body | startswith("문제 없음. 승인합니다.")' <<<"$out" >/dev/null || fail "1 head"
+jq -e '.body | startswith("**승인** · 지적 없음\n\n설정 파일 경로만 바꿈.")' <<<"$out" >/dev/null || fail "1 head"
 jq -e '.body | contains("설정 파일 경로만 바꿈.")' <<<"$out" >/dev/null || fail "1 summary"
 [ "$(jq '.comments | length' <<<"$out")" = "0" ] || fail "1 comments"
 
 # 2. 지적 2건 → COMMENT, 건수 집계, 인라인 2개에 접두
 out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false)
 [ "$(jq -r .event <<<"$out")" = "COMMENT" ] || fail "2 event"
-jq -e '.body | startswith("확인 권장 2건 (버그 1 · 규칙 위반 1 · 참고 0)")' <<<"$out" >/dev/null || fail "2 head"
+jq -e '.body | startswith("**확인 권장** · 버그 1 · 규칙 위반 1\n\n")' <<<"$out" >/dev/null || fail "2 head"
 [ "$(jq '.comments | length' <<<"$out")" = "2" ] || fail "2 comments"
 # 인라인은 GitHub 알림 블록: bug=CAUTION, rule=IMPORTANT, note=NOTE. 한글 라벨은 본문 첫머리에 굵게
 [ "$(jq -r '.comments[0].body' <<<"$out")" = "$(printf '> [!CAUTION]\n> **버그** null 이면 NPE.')" ] || fail "2 bug alert"
@@ -39,15 +39,14 @@ jq -e '.body | startswith("확인 권장 2건 (버그 1 · 규칙 위반 1 · �
 # 3. --no-inline → 인라인 비우고 본문 목록으로
 out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false --no-inline)
 [ "$(jq '.comments | length' <<<"$out")" = "0" ] || fail "3 comments"
-jq -e '.body | contains("- `src/A.kt:12` [버그] null 이면 NPE.")' <<<"$out" >/dev/null || fail "3 list"
-jq -e '.body | contains("- `docs/x.md:3` [규칙 위반] 열린 것 표에 기록 안 됨.")' <<<"$out" >/dev/null || fail "3 list2"
+jq -e '.body | contains("**지적**\n- **버그** `src/A.kt:12`\n  null 이면 NPE.\n- **규칙 위반** `docs/x.md:3`\n  열린 것 표에 기록 안 됨.")' <<<"$out" >/dev/null || fail "3 list"
 
-# 4. 대형 PR: bug 가 없으면 승인하되, 큰 틀만 봤으니 PR 을 나누고 사람이 확인하라고 머리에 적는다. 끝 문구는 중복하지 않는다
+# 4. 대형 PR: bug 가 없으면 승인하되, 큰 틀만 봤으니 나눠 올리고 사람이 확인하라는 알림 블록을 머리 바로 아래 한 번만 붙인다
 out=$(bash scripts/build-payload.sh "$tmp/ok.json" abc123 true)
 [ "$(jq -r .event <<<"$out")" = "APPROVE" ] || fail "4 event"
-jq -e '.body | startswith("승인합니다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다. 머지 전에 사람이 확인하세요.")' <<<"$out" >/dev/null || fail "4 head"
+jq -e '.body | startswith("**승인** · 지적 없음\n\n> [!NOTE]\n> 변경이 커서 큰 틀만 봄. 나눠 올리면 더 자세히 볼 수 있음. 머지 전 사람 확인 필요함.\n\n설정")' <<<"$out" >/dev/null || fail "4 head"
 jq -e '.body | contains("설정 파일 경로만 바꿈.")' <<<"$out" >/dev/null || fail "4 summary"
-jq -e '.body | endswith("변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다.")' <<<"$out" >/dev/null && fail "4 duplicate big note"
+[ "$(jq -r .body <<<"$out" | grep -c "큰 틀만 봄")" = "1" ] || fail "4 duplicate big note"
 # 4b. 대형 PR 에 rule/note 만 → 역시 APPROVE, 건수는 머리에, 인라인은 그대로
 cat > "$tmp/soft.json" <<'EOF'
 {"summary":"설정 정리.","verdict":"check","findings":[
@@ -56,18 +55,18 @@ cat > "$tmp/soft.json" <<'EOF'
 EOF
 out=$(bash scripts/build-payload.sh "$tmp/soft.json" abc123 true)
 [ "$(jq -r .event <<<"$out")" = "APPROVE" ] || fail "4b event"
-jq -e '.body | startswith("승인합니다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다. 머지 전에 사람이 확인하세요. 참고 2건 (규칙 위반 1 · 참고 1)")' <<<"$out" >/dev/null || fail "4b head"
+jq -e '.body | startswith("**승인** · 규칙 위반 1 · 참고 1\n\n> [!NOTE]\n> 변경이 커서 큰 틀만 봄. 나눠 올리면 더 자세히 볼 수 있음. 머지 전 사람 확인 필요함.")' <<<"$out" >/dev/null || fail "4b head"
 [ "$(jq '.comments | length' <<<"$out")" = "2" ] || fail "4b comments"
-# 4c. 대형 PR 에 bug → 기존 "확인 권장" 머리 + 끝에 대형 문구
+# 4c. 대형 PR 에 bug → "확인 권장" 머리 + 대형 알림 블록
 out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 true)
 [ "$(jq -r .event <<<"$out")" = "COMMENT" ] || fail "4c event"
-jq -e '.body | startswith("확인 권장 2건")' <<<"$out" >/dev/null || fail "4c head"
-jq -e '.body | endswith("변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다.")' <<<"$out" >/dev/null || fail "4c big note"
+jq -e '.body | startswith("**확인 권장** · 버그 1 · 규칙 위반 1\n\n> [!NOTE]\n> 변경이 커서 큰 틀만 봄. 나눠 올리면 더 자세히 볼 수 있음. 머지 전 사람 확인 필요함.")' <<<"$out" >/dev/null || fail "4c head"
+jq -e '.body | contains("큰 틀만 봄")' <<<"$out" >/dev/null || fail "4c big note"
 
 # 5. findings 없는데 verdict=check(리뷰 못 함) → COMMENT (승인하지 않는다)
 out=$(bash scripts/build-payload.sh "$tmp/check-empty.json" abc123 false)
 [ "$(jq -r .event <<<"$out")" = "COMMENT" ] || fail "5 event"
-jq -e '.body | startswith("확인 권장")' <<<"$out" >/dev/null || fail "5 head"
+jq -e '.body | startswith("**확인 권장** · 리뷰하지 못함")' <<<"$out" >/dev/null || fail "5 head"
 
 # 6. bug 가 없는 지적(rule·note)만 있으면 → 인라인은 달되 APPROVE ("확실한 오류 아니면 승인")
 cat > "$tmp/soft.json" <<'EOF'
@@ -77,7 +76,7 @@ cat > "$tmp/soft.json" <<'EOF'
 EOF
 out=$(bash scripts/build-payload.sh "$tmp/soft.json" abc123 false)
 [ "$(jq -r .event <<<"$out")" = "APPROVE" ] || fail "6 event"
-jq -e '.body | startswith("승인합니다. 참고 2건 (규칙 위반 1 · 참고 1)")' <<<"$out" >/dev/null || fail "6 head"
+jq -e '.body | startswith("**승인** · 규칙 위반 1 · 참고 1\n\n설정 정리.")' <<<"$out" >/dev/null || fail "6 head"
 [ "$(jq '.comments | length' <<<"$out")" = "2" ] || fail "6 comments"
 
 # 7. bug 가 하나라도 있으면 → COMMENT
@@ -87,23 +86,23 @@ out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false)
 # 8. 승격 PR(--promotion): 코드 리뷰가 아니라 포함 내역 요약. bug 가 없으면 승인하되 사람이 확인하라고 머리에 적는다
 out=$(bash scripts/build-payload.sh "$tmp/ok.json" abc123 false --promotion)
 [ "$(jq -r .event <<<"$out")" = "APPROVE" ] || fail "8 event"
-jq -e '.body | startswith("승인합니다. 승격 PR 이라 포함 내역만 요약했습니다. 머지 전에 사람이 확인하세요.")' <<<"$out" >/dev/null || fail "8 head"
+jq -e '.body | startswith("**승인** · 지적 없음\n\n> [!NOTE]\n> 승격 PR 이라 포함 내역만 요약함. 머지 전 사람 확인 필요함.")' <<<"$out" >/dev/null || fail "8 head"
 jq -e '.body | contains("설정 파일 경로만 바꿈.")' <<<"$out" >/dev/null || fail "8 summary"
 # 8b. 승격 PR 은 줄 수가 커도 대형 문구를 붙이지 않는다(승격 프롬프트가 따로 범위를 정한다)
 out=$(bash scripts/build-payload.sh "$tmp/soft.json" abc123 true --promotion)
 [ "$(jq -r .event <<<"$out")" = "APPROVE" ] || fail "8b event"
-jq -e '.body | startswith("승인합니다. 승격 PR 이라 포함 내역만 요약했습니다. 머지 전에 사람이 확인하세요. 참고 2건 (규칙 위반 1 · 참고 1)")' <<<"$out" >/dev/null || fail "8b head"
+jq -e '.body | startswith("**승인** · 규칙 위반 1 · 참고 1\n\n> [!NOTE]\n> 승격 PR 이라 포함 내역만 요약함. 머지 전 사람 확인 필요함.")' <<<"$out" >/dev/null || fail "8b head"
 jq -e '.body | contains("변경이 커서")' <<<"$out" >/dev/null && fail "8b big note on promotion"
 [ "$(jq '.comments | length' <<<"$out")" = "2" ] || fail "8b comments"
-# 8c. 승격 PR 에 bug → 기존 "확인 권장" 머리, 끝에 승격 문구
+# 8c. 승격 PR 에 bug → "확인 권장" 머리 + 승격 알림 블록
 out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false --promotion)
 [ "$(jq -r .event <<<"$out")" = "COMMENT" ] || fail "8c event"
-jq -e '.body | startswith("확인 권장 2건")' <<<"$out" >/dev/null || fail "8c head"
-jq -e '.body | endswith("승격 PR 이라 포함 내역만 요약했습니다.")' <<<"$out" >/dev/null || fail "8c note"
+jq -e '.body | startswith("**확인 권장** · 버그 1 · 규칙 위반 1\n\n> [!NOTE]\n> 승격 PR 이라 포함 내역만 요약함. 머지 전 사람 확인 필요함.")' <<<"$out" >/dev/null || fail "8c head"
+jq -e '.body | contains("포함 내역만 요약함")' <<<"$out" >/dev/null || fail "8c note"
 # 8d. --promotion 과 --no-inline 은 같이 쓸 수 있다(422 재시도 경로), 순서 무관
 out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false --promotion --no-inline)
 [ "$(jq '.comments | length' <<<"$out")" = "0" ] || fail "8d comments"
-jq -e '.body | contains("- `src/A.kt:12` [버그] null 이면 NPE.")' <<<"$out" >/dev/null || fail "8d list"
+jq -e '.body | contains("- **버그** `src/A.kt:12`\n  null 이면 NPE.")' <<<"$out" >/dev/null || fail "8d list"
 out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false --no-inline --promotion)
 [ "$(jq '.comments | length' <<<"$out")" = "0" ] || fail "8d order"
 
@@ -121,5 +120,15 @@ jq -e '.body | endswith("- #7 제목\n\n</details>")' <<<"$out" >/dev/null || fa
 jq -n '{summary:"PR 2건 포함.\n- #1 a\n- #2 b",verdict:"ok",findings:[]}' > "$tmp/short.json"
 bash scripts/build-payload.sh "$tmp/short.json" abc123 false --promotion | jq -e '.body | contains("<details>")' >/dev/null && fail "10b short list folded"
 bash scripts/build-payload.sh "$tmp/long.json" abc123 false | jq -e '.body | contains("<details>")' >/dev/null && fail "10b normal PR folded"
+
+# 11. 선택 필드(reviewed·not_reviewed)는 요약 아래 제목 + 불릿으로. 모델이 붙여 온 "- " 는 겹치지 않고, 빈 배열은 구획을 만들지 않는다
+jq -n '{summary:"BFF 위주로 봄.",verdict:"ok",findings:[],reviewed:["가드 순서가 일별 조회와 같음","- `item` 을 상수 목록으로 검증함"],not_reviewed:["테스트 파일"]}' > "$tmp/sections.json"
+out=$(bash scripts/build-payload.sh "$tmp/sections.json" abc123 false)
+jq -e '.body | endswith("BFF 위주로 봄.\n\n**확인한 것**\n- 가드 순서가 일별 조회와 같음\n- `item` 을 상수 목록으로 검증함\n\n**확인하지 않은 것**\n- 테스트 파일")' <<<"$out" >/dev/null || fail "11 sections"
+jq -n '{summary:"s",verdict:"ok",findings:[],reviewed:["a"],not_reviewed:[]}' > "$tmp/all.json"
+bash scripts/build-payload.sh "$tmp/all.json" abc123 false | jq -e '.body | contains("확인하지 않은 것")' >/dev/null && fail "11 empty section"
+# 11b. --no-inline 의 여러 줄 본문은 목록 항목 안에 들여쓴다
+out=$(bash scripts/build-payload.sh "$tmp/multi.json" abc123 false --no-inline)
+jq -e '.body | endswith("**지적**\n- **참고** `a:1`\n  첫 줄.\n  둘째 줄.")' <<<"$out" >/dev/null || fail "11b multiline list"
 
 echo "PASS"

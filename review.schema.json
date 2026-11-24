@@ -2,6 +2,8 @@
   "type": "object",
   "properties": {
     "summary": { "type": "string" },
+    "reviewed": { "type": "array", "items": { "type": "string" } },
+    "not_reviewed": { "type": "array", "items": { "type": "string" } },
     "verdict": { "type": "string", "enum": ["ok", "check"] },
     "findings": {
       "type": "array",
