@@ -5,11 +5,24 @@
 ## 동작
 
 1. `gh search prs --review-requested=$ME --owner=$ORG --state=open --draft=false`
-2. PR 마다 clone → diff 와 변경 파일 목록을 `.pr-review/` 에 써 두고 → `claude -p` (Read/Grep/Glob 만, Bash 없음. CLAUDE.md 와 diff 를 읽고 JSON 으로 리뷰) → 리뷰 API 한 번에 제출
+2. PR 마다 clone → diff 와 변경 파일 목록을 `.pr-review/` 에 써 두고 → 그 레포의 규칙 문서를 모아(아래 "규칙 문서") → `claude -p` (Read/Grep/Glob 만, Bash 없음. 주입된 규칙과 diff 를 읽고 JSON 으로 리뷰) → 리뷰 API 한 번에 제출
    - 승인 규칙: 확실한 오류(`bug`)가 없으면 Approve. 규칙 위반(`rule`)·참고(`note`)는 해당 줄 코멘트로만 달린다. diff 를 못 읽어 리뷰 자체를 못 하면 Comment 로 "확인 권장" 만 남긴다
-   - 대형 PR(변경 1500줄 초과): 핵심 경로만 본다. 승인은 하되 본문 머리에 "핵심 경로만 봤으니 머지 전에 사람이 확인하세요" 가 붙는다
+   - 대형 PR(변경 1500줄 초과. lock 파일·스냅샷은 세지 않는다): 줄 단위로 보지 않고 큰 틀(방향·구조·위험 지점)만 본다. 승인은 하되 본문 머리에 "큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다. 머지 전에 사람이 확인하세요" 가 붙고, 요약에 어떤 단위로 나누면 좋을지 제안이 들어간다
    - 승격 PR(base 가 `main`/`master`/`prod*`/`release`/`release/*`): 코드는 각 feature PR 에서 이미 봤으므로 다시 읽지 않는다. `prompt-promotion.md` 로 바꿔 포함된 PR/커밋 목록(`.pr-review/commits.txt`)과 눈여겨볼 것(마이그레이션·설정·인프라·삭제·PR 번호 없는 커밋)만 정리한다. 승인은 하되 "포함 내역만 요약했으니 머지 전에 사람이 확인하세요" 가 붙는다
 3. 리뷰를 제출하면 GitHub 이 요청을 해소하므로 다음 tick 에 다시 잡히지 않는다. "리뷰 재요청" 을 누르면(같은 커밋이어도) 다시 돈다. 가드는 live 로 "지금 내가 요청된 리뷰어인가" 만 본다.
+
+## 규칙 문서
+
+리뷰 대상 레포의 규칙은 모델이 찾아 읽게 두지 않는다. `scripts/collect-rules.sh` 가 모아서 시스템 프롬프트에 붙이고, 모델은 그 블록에 **글로 적힌 규칙만** 린터처럼 적용한다(`rule`). 블록에 없는 문서를 규칙을 찾으러 따라가지 않는다.
+
+- 모으는 것(파일명 대소문자 무시): `**/CLAUDE.md`, `**/AGENTS.md`, `**/.claude/CLAUDE.md`, `**/.claude/rules/**/*.md`. Claude 를 쓰는 팀이든 다른 도구(`AGENTS.md`)를 쓰는 팀이든 둘 다 들어간다.
+- 범위: 레포 루트의 것 + 변경 파일의 상위 디렉터리에 있는 것. 모노레포에서 건드리지 않은 앱의 규칙은 넣지 않는다. `node_modules`·`vendor`·`.agents` 아래는 뺀다.
+- 위 문서가 `@경로.md` 로 불러오는 문서는 따라가서 넣는다(`CLAUDE.md` 가 `@AGENTS.md` 한 줄뿐인 레포). 심볼릭 링크는 대상 파일을 넣는다.
+- **base 브랜치에서 읽는다.** PR 이 규칙 문서를 고쳐도 고치기 전 규칙으로 본다. 그 경우 리뷰 요약에 규칙 문서가 바뀌었다고 적힌다.
+- 합계 120KB(`RULES_MAX_BYTES`)를 넘으면 넘는 파일은 경로만 넘긴다.
+- 로그에는 `rules: files=N touched=0|1` 숫자만 남는다. `files=0` 이면 그 레포에 규칙 문서가 없어 `rule` 항목이 적용되지 않은 것이다.
+- 한계: 규칙 본문을 `@` import 가 아니라 일반 링크나 "이 문서를 읽어라" 로만 가리키는 레포는 그 본문이 들어가지 않는다. 그 레포에서 규칙을 적용받으려면 진입 문서에서 `@경로.md` 로 불러오게 한다.
+- 승격 PR 은 코드를 다시 보지 않으므로 규칙을 넣지 않는다.
 
 ## 시크릿 (Settings → Secrets → Actions)
 
@@ -72,6 +85,7 @@ GitHub 은 레포에 60일간 커밋이 없으면 schedule 워크플로를 자�
 
 ```bash
 bash scripts/test-build-payload.sh                                   # payload 변환 단위 테스트
+bash scripts/test-collect-rules.sh                                   # 규칙 문서 수집 단위 테스트
 bash scripts/test-review.sh                                          # 가짜 gh·claude 로 흐름 테스트
 DRY_RUN=1 ORG=<조직> ME=<계정> bash scripts/review.sh              # 검색까지만, 제출 안 함
 DRY_RUN=1 FORCE_REPO=<조직>/<레포> FORCE_PR=<번호> ORG=<조직> ME=<계정> bash scripts/review.sh   # 특정 PR 로 리뷰 생성까지, 제출 안 함

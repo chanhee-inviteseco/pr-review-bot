@@ -33,7 +33,10 @@ gh pr checkout "$number" >/dev/null 2>&1 || { echo "checkout failed"; exit 1; }
 # base 를 못 가져오면 diff 를 볼 수 없다. diff 없이 ok 가 나오면 승인이 나가므로 여기서 닫는다.
 git fetch -q origin "$base" >/dev/null 2>&1 || { echo "diff failed"; exit 1; }
 
-changed=$(git diff --numstat "origin/$base...HEAD" 2>/dev/null | awk '{a+=$1+$2} END{print a+0}')
+# 대형 PR 판정은 사람이 쓴 줄만 센다. lock 파일·스냅샷 때문에 "PR 을 나눠 달라" 가 나가면 틀린 지적이 된다.
+changed=$(git diff --numstat "origin/$base...HEAD" -- . \
+    ':(exclude)*.lock' ':(exclude)*package-lock.json' ':(exclude)*pnpm-lock.yaml' ':(exclude)*.snap' 2>/dev/null \
+  | awk '{a+=$1+$2} END{print a+0}')
 big=false; [ "${changed:-0}" -gt 1500 ] && big=true
 
 # 승격 PR: base 가 배포 브랜치면 코드 리뷰가 아니라 "이번 승격에 뭐가 들어가나" 를 요약한다(prompt-promotion.md).
@@ -50,6 +53,19 @@ git diff "origin/$base...HEAD" > .pr-review/diff.patch 2>/dev/null
 git diff --name-status "origin/$base...HEAD" > .pr-review/files.txt 2>/dev/null
 git log --first-parent --format='%h %s' "origin/$base..HEAD" > .pr-review/commits.txt 2>/dev/null
 
+# 규칙 문서는 모델이 찾아 읽게 두지 않고 여기서 base 브랜치 기준으로 모아 시스템 프롬프트에 붙인다(collect-rules.sh).
+# 승격 PR 은 코드를 다시 보지 않으므로 규칙도 넣지 않는다. 못 모으면 닫는다 — 규칙 없이 조용히 승인하지 않는다.
+# 로그에는 숫자만 남긴다. files=0 이면 그 레포에 규칙 문서가 없다는 뜻이다.
+rules_file=""; nrules=0; rules_touched=0
+if [ "$promotion" = false ]; then
+  rules_file="$work/rules.md"
+  counts=$(bash "$ROOT/scripts/collect-rules.sh" "origin/$base" .pr-review/files.txt "$rules_file" 2>/dev/null) \
+    || { echo "rules failed"; exit 1; }
+  nrules="${counts% *}"; rules_touched="${counts#* }"
+  echo "rules: files=$nrules touched=$rules_touched"
+fi
+rules_changed=false; [ "$rules_touched" = "1" ] && rules_changed=true
+
 prompt="$(cat "$prompt_file")
 
 ---
@@ -57,14 +73,19 @@ PR: #$number
 base: origin/$base
 변경 줄 수: $changed
 대형 PR: $big
-승격 PR: $promotion"
+승격 PR: $promotion
+규칙 문서 수: $nrules
+규칙 문서 변경: $rules_changed"
 
 # macOS 로컬에는 timeout 이 없을 수 있다(coreutils 의 gtimeout). 없으면 상한 없이 돈다.
 t="$(command -v timeout || command -v gtimeout || true)"
 # Claude 는 GitHub 토큰이 필요 없다. env 에서 빼서 리뷰 대상 레포의 훅·MCP 가 읽을 수 없게 한다.
-# --setting-sources user: 대상 레포의 .claude/settings.json(훅) 을 읽지 않는다. CLAUDE.md 는 그대로 읽는다.
+# --setting-sources user: 대상 레포의 .claude/settings.json(훅) 을 읽지 않는다.
+#   CLAUDE.md 자동 로드에는 기대지 않는다(로컬 확인에서 컨텍스트에 안 들어왔다). 규칙은 아래 파일로 직접 넣는다.
 # --strict-mcp-config: 대상 레포의 .mcp.json 을 읽지 않는다.
+# --append-system-prompt-file: 인자 길이 한도(리눅스 인자 하나 128KB)를 피하려고 파일로 넘긴다.
 ${t:+"$t" 900} env -u GH_TOKEN -u GH_PAT claude -p "$prompt" \
+  ${rules_file:+--append-system-prompt-file "$rules_file"} \
   --output-format json \
   --json-schema "$(cat "$ROOT/review.schema.json")" \
   --model claude-sonnet-5-5 --effort medium \

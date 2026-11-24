@@ -40,12 +40,12 @@ out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false --no-inline)
 jq -e '.body | contains("- `src/A.kt:12` [버그] null 이면 NPE.")' <<<"$out" >/dev/null || fail "3 list"
 jq -e '.body | contains("- `docs/x.md:3` [규칙 위반] 열린 것 표에 기록 안 됨.")' <<<"$out" >/dev/null || fail "3 list2"
 
-# 4. 대형 PR: bug 가 없으면 승인하되, 핵심 경로만 봤으니 사람이 확인하라고 머리에 적는다. 끝 문구는 중복하지 않는다
+# 4. 대형 PR: bug 가 없으면 승인하되, 큰 틀만 봤으니 PR 을 나누고 사람이 확인하라고 머리에 적는다. 끝 문구는 중복하지 않는다
 out=$(bash scripts/build-payload.sh "$tmp/ok.json" abc123 true)
 [ "$(jq -r .event <<<"$out")" = "APPROVE" ] || fail "4 event"
-jq -e '.body | startswith("승인합니다. 변경이 커서 핵심 경로만 봤습니다. 머지 전에 사람이 확인하세요.")' <<<"$out" >/dev/null || fail "4 head"
+jq -e '.body | startswith("승인합니다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다. 머지 전에 사람이 확인하세요.")' <<<"$out" >/dev/null || fail "4 head"
 jq -e '.body | contains("설정 파일 경로만 바꿈.")' <<<"$out" >/dev/null || fail "4 summary"
-jq -e '.body | endswith("변경이 커서 핵심 경로 위주로 봤습니다.")' <<<"$out" >/dev/null && fail "4 duplicate big note"
+jq -e '.body | endswith("변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다.")' <<<"$out" >/dev/null && fail "4 duplicate big note"
 # 4b. 대형 PR 에 rule/note 만 → 역시 APPROVE, 건수는 머리에, 인라인은 그대로
 cat > "$tmp/soft.json" <<'EOF'
 {"summary":"설정 정리.","verdict":"check","findings":[
@@ -54,13 +54,13 @@ cat > "$tmp/soft.json" <<'EOF'
 EOF
 out=$(bash scripts/build-payload.sh "$tmp/soft.json" abc123 true)
 [ "$(jq -r .event <<<"$out")" = "APPROVE" ] || fail "4b event"
-jq -e '.body | startswith("승인합니다. 변경이 커서 핵심 경로만 봤습니다. 머지 전에 사람이 확인하세요. 참고 2건 (규칙 위반 1 · 참고 1)")' <<<"$out" >/dev/null || fail "4b head"
+jq -e '.body | startswith("승인합니다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다. 머지 전에 사람이 확인하세요. 참고 2건 (규칙 위반 1 · 참고 1)")' <<<"$out" >/dev/null || fail "4b head"
 [ "$(jq '.comments | length' <<<"$out")" = "2" ] || fail "4b comments"
 # 4c. 대형 PR 에 bug → 기존 "확인 권장" 머리 + 끝에 대형 문구
 out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 true)
 [ "$(jq -r .event <<<"$out")" = "COMMENT" ] || fail "4c event"
 jq -e '.body | startswith("확인 권장 2건")' <<<"$out" >/dev/null || fail "4c head"
-jq -e '.body | endswith("변경이 커서 핵심 경로 위주로 봤습니다.")' <<<"$out" >/dev/null || fail "4c big note"
+jq -e '.body | endswith("변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다.")' <<<"$out" >/dev/null || fail "4c big note"
 
 # 5. findings 없는데 verdict=check(리뷰 못 함) → COMMENT (승인하지 않는다)
 out=$(bash scripts/build-payload.sh "$tmp/check-empty.json" abc123 false)

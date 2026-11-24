@@ -17,9 +17,14 @@ case "$1 $2" in
   "repo clone")
     # 자기 자신을 origin 으로 둬서 git fetch origin $base 가 성공한다. FAKE_NO_ORIGIN=1 이면 fetch 가 실패한다
     # FAKE_BASE 로 base 브랜치 이름을 바꾼다(승격 PR 판정). FAKE_BIG=1 이면 PR 쪽에 1600줄짜리 파일을 넣는다(대형 PR)
-    mkdir -p "$4" && (cd "$4" && git init -q && git commit -q --allow-empty -m init && git branch -q -M "${FAKE_BASE:-develop}" \
+    # FAKE_RULES=1 이면 base 에 규칙 문서를 두고 PR 이 AGENTS.md 를 고친다(규칙은 base 것을 써야 한다)
+    mkdir -p "$4" && (cd "$4" && git init -q && git commit -q --allow-empty -m init \
+      && { [ "${FAKE_RULES:-}" != "1" ] || { printf '@AGENTS.md\n' > CLAUDE.md && echo RULE-FROM-BASE > AGENTS.md && git add -A && git commit -q -m rules; }; } \
+      && git branch -q -M "${FAKE_BASE:-develop}" \
       && git checkout -q -b pr && git commit -q --allow-empty -m pr \
+      && { [ "${FAKE_RULES:-}" != "1" ] || { echo RULE-FROM-HEAD > AGENTS.md && git add -A && git commit -q -m edit-rules; }; } \
       && { [ "${FAKE_BIG:-}" != "1" ] || { seq 1600 > big.txt && git add big.txt && git commit -q -m big; }; } \
+      && { [ "${FAKE_BIG:-}" != "lock" ] || { mkdir -p web && seq 1600 > web/package-lock.json && seq 1600 > yarn.lock && git add -A && git commit -q -m lock; }; } \
       && { [ "${FAKE_NO_ORIGIN:-}" = "1" ] || git remote add origin "$4"; }) ;;
   "pr checkout") ;;
   "api "*)
@@ -50,6 +55,7 @@ echo "claude $*" >> "$FAKE_LOG"
 echo "claude-env GH_TOKEN=${GH_TOKEN:-unset} GH_PAT=${GH_PAT:-unset}" >> "$FAKE_LOG"
 [ -f .pr-review/diff.patch ] && [ -f .pr-review/files.txt ] && echo "claude-diff present" >> "$FAKE_LOG"
 [ -s .pr-review/commits.txt ] && echo "claude-commits present" >> "$FAKE_LOG"
+prev=""; for a in "$@"; do [ "$prev" = "--append-system-prompt-file" ] && cp "$a" "$FAKE_RULES_OUT" 2>/dev/null; prev="$a"; done
 cat >/dev/null   # 실제 claude -p 는 stdin 이 TTY 가 아니면 끝까지 읽는다. 루프의 남은 대상을 삼키는 버그 재현용
 [ "${FAKE_CLAUDE_FAIL:-}" = "1" ] && exit 1
 if [ "${FAKE_CLAUDE_TEXT_FIRST:-}" = "1" ] && [ "$(grep -c '^claude -p' "$FAKE_LOG")" -eq 1 ]; then
@@ -61,9 +67,9 @@ chmod +x "$tmp/bin/claude"
 }
 write_fake_gh; write_fake_claude
 export PATH="$tmp/bin:$PATH"
-export FAKE_LOG="$tmp/calls.log" FAKE_SEARCH="$tmp/search.json" FAKE_CLAUDE_OUT="$tmp/claude.json" FAKE_PAYLOAD="$tmp/payload.json"
+export FAKE_LOG="$tmp/calls.log" FAKE_SEARCH="$tmp/search.json" FAKE_CLAUDE_OUT="$tmp/claude.json" FAKE_PAYLOAD="$tmp/payload.json" FAKE_RULES_OUT="$tmp/rules-seen.md"
 export ORG=acme ME=someone
-unset GH_PAT FAKE_API_422_FIRST FAKE_CLAUDE_FAIL FAKE_CLAUDE_TEXT_FIRST DRY_RUN FORCE_REPO FORCE_PR FAKE_BASE FAKE_BIG
+unset GH_PAT FAKE_API_422_FIRST FAKE_CLAUDE_FAIL FAKE_CLAUDE_TEXT_FIRST DRY_RUN FORCE_REPO FORCE_PR FAKE_BASE FAKE_BIG FAKE_RULES
 
 echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
 
@@ -234,18 +240,24 @@ FAKE_BASE=main FAKE_API_422_FIRST=1 bash scripts/review.sh >/dev/null 2>&1 || fa
 [ "$(grep -c 'api -X POST' "$FAKE_LOG")" = "2" ] || fail "21c retry"
 jq -e '.body | endswith("승격 PR 이라 포함 내역만 요약했습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "21c promotion note lost on retry"
 
-# 22. 대형 PR(변경 1500줄 초과) 에 bug 없음 → 승인하되 핵심 경로만 봤다고 머리에 적는다
+# 22. 대형 PR(변경 1500줄 초과) 에 bug 없음 → 승인하되 큰 틀만 봤고 PR 을 나눠 달라고 머리에 적는다
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
 echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
 FAKE_BIG=1 bash scripts/review.sh >/dev/null 2>&1 || fail "22 exit"
 grep -q "대형 PR: true" "$FAKE_LOG" || fail "22 big flag not passed to claude"
 [ "$(jq -r .event "$FAKE_PAYLOAD")" = "APPROVE" ] || fail "22 event"
-jq -e '.body | startswith("승인합니다. 변경이 커서 핵심 경로만 봤습니다. 머지 전에 사람이 확인하세요.")' "$FAKE_PAYLOAD" >/dev/null || fail "22 head"
+jq -e '.body | startswith("승인합니다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다. 머지 전에 사람이 확인하세요.")' "$FAKE_PAYLOAD" >/dev/null || fail "22 head"
 # 22b. 본인이 연 대형 PR → 승인 대신 코멘트, 머리의 "승인합니다." 만 바뀐다
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
 FAKE_BIG=1 FAKE_AUTHOR=someone bash scripts/review.sh >/dev/null 2>&1 || fail "22b exit"
 [ "$(jq -r .event "$FAKE_PAYLOAD")" = "COMMENT" ] || fail "22b event"
-jq -e '.body | startswith("본인 PR 이라 승인 대신 코멘트로 남긴다. 변경이 커서 핵심 경로만 봤습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "22b head"
+jq -e '.body | startswith("본인 PR 이라 승인 대신 코멘트로 남긴다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "22b head"
+
+# 22c. lock 파일만 큰 PR 은 대형 PR 이 아니다("PR 을 나눠 달라" 가 잘못 나가지 않는다)
+: > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
+FAKE_BIG=lock bash scripts/review.sh >/dev/null 2>&1 || fail "22c exit"
+grep -q "대형 PR: false" "$FAKE_LOG" || fail "22c lock files counted as a large change"
+jq -e '.body | startswith("문제 없음. 승인합니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "22c head"
 
 # 23. 작성자가 SKIP_AUTHORS(쉼표 구분, 대소문자 무시)에 있으면 clone 도 리뷰도 하지 않는다. 출력에 계정명 없음
 echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; : > "$FAKE_LOG"
@@ -263,6 +275,28 @@ grep -q "claude -p" "$FAKE_LOG" || fail "23b non-listed author was skipped"
 : > "$FAKE_LOG"
 DRY_RUN=1 FORCE_REPO=acme/z FORCE_PR=42 SKIP_AUTHORS=skip-me FAKE_AUTHOR=skip-me bash scripts/review.sh >/dev/null 2>&1 || fail "23c exit"
 grep -q "claude -p" "$FAKE_LOG" || fail "23c forced run was blocked by SKIP_AUTHORS"
+
+# 24. 규칙 문서는 스크립트가 base 브랜치에서 모아 시스템 프롬프트 파일로 넘긴다(모델이 찾아 읽기를 기대하지 않는다).
+#     PR 이 규칙을 고쳐도 base 내용이 들어가고, 로그에는 숫자만 남는다
+echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; : > "$FAKE_LOG"; rm -f "$FAKE_RULES_OUT"
+echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
+out=$(FAKE_RULES=1 bash scripts/review.sh 2>&1) || fail "24 exit"
+grep -q -- "--append-system-prompt-file" "$FAKE_LOG" || fail "24 rules file not passed"
+grep -q "RULE-FROM-BASE" "$FAKE_RULES_OUT" || fail "24 base rule (via @import) not injected"
+grep -q "RULE-FROM-HEAD" "$FAKE_RULES_OUT" && fail "24 PR-edited rule was injected"
+grep -q "^rules: files=2 touched=1$" <<<"$out" || fail "24 rules line: $out"
+grep -q "규칙 문서 변경: true" "$FAKE_LOG" || fail "24 touched flag not passed to claude"
+grep -q "RULE-FROM" <<<"$out" && fail "24 leaked rule text: $out"
+# 24b. 규칙 문서가 없는 레포 → files=0, 블록은 '없다' 로 넘긴다
+: > "$FAKE_LOG"; rm -f "$FAKE_RULES_OUT"
+out=$(bash scripts/review.sh 2>&1) || fail "24b exit"
+grep -q "^rules: files=0 touched=0$" <<<"$out" || fail "24b rules line: $out"
+grep -q "규칙 문서가 없다" "$FAKE_RULES_OUT" || fail "24b empty block"
+# 24c. 승격 PR 은 코드를 다시 보지 않으므로 규칙을 넣지 않는다
+: > "$FAKE_LOG"
+out=$(FAKE_RULES=1 FAKE_BASE=main bash scripts/review.sh 2>&1) || fail "24c exit"
+grep -q -- "--append-system-prompt-file" "$FAKE_LOG" && fail "24c rules injected on a promotion PR"
+grep -q "^rules:" <<<"$out" && fail "24c rules line on a promotion PR"
 
 rm -f work-last-payload.json work-last-claude.out
 echo "PASS"

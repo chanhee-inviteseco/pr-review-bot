@@ -30,7 +30,7 @@ jq -n --slurpfile in "$review" --arg sha "$head_sha" --arg big "$big" --arg mode
   | (if ($f|length)==0 then "" else " 참고 \($f|length)건 (규칙 위반 \($nr) · 참고 \($nn))" end) as $soft
   | (if $unreviewed then "확인 권장 (요약 참고)"
      elif $approve and $promo then "승인합니다. 승격 PR 이라 포함 내역만 요약했습니다. 머지 전에 사람이 확인하세요." + $soft
-     elif $approve and $isbig then "승인합니다. 변경이 커서 핵심 경로만 봤습니다. 머지 전에 사람이 확인하세요." + $soft
+     elif $approve and $isbig then "승인합니다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다. 머지 전에 사람이 확인하세요." + $soft
      elif ($f|length)==0 then "문제 없음. 승인합니다."
      elif $approve then "승인합니다." + $soft
      else "확인 권장 \($f|length)건 (버그 \($nb) · 규칙 위반 \($nr) · 참고 \($nn))" end) as $head
@@ -40,7 +40,7 @@ jq -n --slurpfile in "$review" --arg sha "$head_sha" --arg big "$big" --arg mode
   # 머리가 이미 이유를 말했으면(approve) 끝 문구를 반복하지 않는다
   | (if $approve then ""
      elif $promo then "\n\n승격 PR 이라 포함 내역만 요약했습니다."
-     elif $isbig then "\n\n변경이 커서 핵심 경로 위주로 봤습니다."
+     elif $isbig then "\n\n변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다."
      else "" end) as $note
   | {
       commit_id: $sha,
