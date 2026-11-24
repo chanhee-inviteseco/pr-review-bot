@@ -117,8 +117,8 @@ bash "$ROOT/scripts/build-payload.sh" "$work/review.json" "$head_sha" "$big" $fl
 # GitHub 은 본인 PR 승인을 거부한다(422). 내가 연 PR 이면 Approve 를 Comment 로 내린다.
 if [ "$author" = "${ME:-}" ]; then
   jq '.event = "COMMENT"
-      | .body |= sub("^문제 없음\\. 승인합니다\\."; "문제 없음. 본인 PR 이라 승인 대신 코멘트로 남긴다.")
-      | .body |= sub("^승인합니다\\. "; "본인 PR 이라 승인 대신 코멘트로 남긴다. ")' \
+      | .body |= sub("^문제 없음\\. 승인합니다\\."; "문제 없음. 본인 PR 이라 승인 대신 코멘트로 남깁니다.")
+      | .body |= sub("^승인합니다\\. "; "본인 PR 이라 승인 대신 코멘트로 남깁니다. ")' \
     "$work/payload.json" > "$work/payload.self.json" && mv "$work/payload.self.json" "$work/payload.json"
 fi
 

@@ -123,7 +123,7 @@ echo '[{"number":7,"repository":{"nameWithOwner":"acme/a"}}]' > "$FAKE_SEARCH"; 
 echo '{"structured_output":{"summary":"요약","verdict":"ok","findings":[]}}' > "$FAKE_CLAUDE_OUT"
 FAKE_AUTHOR=someone bash scripts/review.sh >/dev/null 2>&1 || fail "8 exit"
 [ "$(jq -r .event "$FAKE_PAYLOAD")" = "COMMENT" ] || fail "8 event: $(jq -r .event "$FAKE_PAYLOAD")"
-jq -e '.body | startswith("문제 없음. 본인 PR 이라 승인 대신 코멘트로 남긴다.")' "$FAKE_PAYLOAD" >/dev/null || fail "8 head"
+jq -e '.body | startswith("문제 없음. 본인 PR 이라 승인 대신 코멘트로 남깁니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "8 head"
 
 # 9. 남의 PR 에 verdict ok → APPROVE 그대로
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
@@ -251,7 +251,7 @@ jq -e '.body | startswith("승인합니다. 변경이 커서 큰 틀만 봤습�
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
 FAKE_BIG=1 FAKE_AUTHOR=someone bash scripts/review.sh >/dev/null 2>&1 || fail "22b exit"
 [ "$(jq -r .event "$FAKE_PAYLOAD")" = "COMMENT" ] || fail "22b event"
-jq -e '.body | startswith("본인 PR 이라 승인 대신 코멘트로 남긴다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "22b head"
+jq -e '.body | startswith("본인 PR 이라 승인 대신 코멘트로 남깁니다. 변경이 커서 큰 틀만 봤습니다. PR 을 나눠 올리면 더 자세히 볼 수 있습니다.")' "$FAKE_PAYLOAD" >/dev/null || fail "22b head"
 
 # 22c. lock 파일만 큰 PR 은 대형 PR 이 아니다("PR 을 나눠 달라" 가 잘못 나가지 않는다)
 : > "$FAKE_LOG"; rm -f "$FAKE_PAYLOAD"
