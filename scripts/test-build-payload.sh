@@ -30,7 +30,9 @@ out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false)
 [ "$(jq -r .event <<<"$out")" = "COMMENT" ] || fail "2 event"
 jq -e '.body | startswith("확인 권장 2건 (버그 1 · 규칙 위반 1 · 참고 0)")' <<<"$out" >/dev/null || fail "2 head"
 [ "$(jq '.comments | length' <<<"$out")" = "2" ] || fail "2 comments"
-[ "$(jq -r '.comments[0].body' <<<"$out")" = "[버그] null 이면 NPE." ] || fail "2 prefix"
+# 인라인은 GitHub 알림 블록: bug=CAUTION, rule=IMPORTANT, note=NOTE. 한글 라벨은 본문 첫머리에 굵게
+[ "$(jq -r '.comments[0].body' <<<"$out")" = "$(printf '> [!CAUTION]\n> **버그** null 이면 NPE.')" ] || fail "2 bug alert"
+[ "$(jq -r '.comments[1].body' <<<"$out")" = "$(printf '> [!IMPORTANT]\n> **규칙 위반** 열린 것 표에 기록 안 됨.')" ] || fail "2 rule alert"
 [ "$(jq -r '.comments[0].side' <<<"$out")" = "RIGHT" ] || fail "2 side"
 [ "$(jq -r '.comments[1].line' <<<"$out")" = "3" ] || fail "2 line"
 
@@ -104,5 +106,20 @@ out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false --promotion --n
 jq -e '.body | contains("- `src/A.kt:12` [버그] null 이면 NPE.")' <<<"$out" >/dev/null || fail "8d list"
 out=$(bash scripts/build-payload.sh "$tmp/two.json" abc123 false --no-inline --promotion)
 [ "$(jq '.comments | length' <<<"$out")" = "0" ] || fail "8d order"
+
+# 9. note 는 NOTE 알림. 본문이 여러 줄이면 모든 줄이 인용(>)으로 묶여 알림 블록 밖으로 새지 않는다
+jq -n '{summary:"s",verdict:"ok",findings:[{path:"a",line:1,severity:"note",body:"첫 줄.\n둘째 줄."}]}' > "$tmp/multi.json"
+out=$(bash scripts/build-payload.sh "$tmp/multi.json" abc123 false)
+[ "$(jq -r '.comments[0].body' <<<"$out")" = "$(printf '> [!NOTE]\n> **참고** 첫 줄.\n> 둘째 줄.')" ] || fail "9 multiline alert"
+
+# 10. 승격 PR 의 포함 목록이 길면(6줄 이상) 첫 줄만 보이고 나머지는 <details> 로 접는다
+jq -n '{summary:("PR 7건 포함.\n" + ([range(1;8)|"- #\(.) 제목"]|join("\n"))),verdict:"ok",findings:[]}' > "$tmp/long.json"
+out=$(bash scripts/build-payload.sh "$tmp/long.json" abc123 false --promotion)
+jq -e '.body | contains("PR 7건 포함.\n\n<details>\n<summary>포함 내역 7줄</summary>\n\n- #1 제목\n")' <<<"$out" >/dev/null || fail "10 details open"
+jq -e '.body | endswith("- #7 제목\n\n</details>")' <<<"$out" >/dev/null || fail "10 details close"
+# 10b. 짧은 목록과 일반 PR 은 접지 않는다
+jq -n '{summary:"PR 2건 포함.\n- #1 a\n- #2 b",verdict:"ok",findings:[]}' > "$tmp/short.json"
+bash scripts/build-payload.sh "$tmp/short.json" abc123 false --promotion | jq -e '.body | contains("<details>")' >/dev/null && fail "10b short list folded"
+bash scripts/build-payload.sh "$tmp/long.json" abc123 false | jq -e '.body | contains("<details>")' >/dev/null && fail "10b normal PR folded"
 
 echo "PASS"
